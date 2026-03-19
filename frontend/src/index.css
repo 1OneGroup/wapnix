@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #16a34a;
+  --color-primary-light: #f0fdf4;
+  --color-primary-medium: #bbf7d0;
+  --color-primary-dark: #15803d;
+  --color-primary-ring: #22c55e;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #f3f4f6;
+}
+
+/* Dark mode */
+html.dark body {
+  background-color: #111827;
+  color: #f3f4f6;
+}
+
+html.dark .settings-card {
+  background-color: #1f2937;
+}
+
+html.dark .settings-text {
+  color: #f3f4f6;
+}
+
+html.dark .settings-subtext {
+  color: #9ca3af;
+}
+
+html.dark .settings-border {
+  border-color: #374151;
+}
+
+html.dark .settings-input {
+  background-color: #374151;
+  border-color: #4b5563;
+  color: #f3f4f6;
+}
+
+html.dark .settings-card-hover:hover {
+  background-color: #374151;
+}
+
+/* Light mode defaults */
+.settings-card {
+  background-color: #ffffff;
+}
+
+.settings-text {
+  color: #1f2937;
+}
+
+.settings-subtext {
+  color: #6b7280;
+}
+
+.settings-border {
+  border-color: #e5e7eb;
+}
+
+.settings-input {
+  background-color: #ffffff;
+  border-color: #d1d5db;
+  color: #1f2937;
+}
+
+/* Dark mode overrides for main layout */
+html.dark .bg-white {
+  background-color: #1f2937 !important;
+}
+
+html.dark .bg-gray-100 {
+  background-color: #111827 !important;
+}
+
+html.dark .bg-gray-50 {
+  background-color: #1a2332 !important;
+}
+
+html.dark .text-gray-800 {
+  color: #f3f4f6 !important;
+}
+
+html.dark .text-gray-700 {
+  color: #e5e7eb !important;
+}
+
+html.dark .text-gray-600 {
+  color: #d1d5db !important;
+}
+
+html.dark .text-gray-500 {
+  color: #9ca3af !important;
+}
+
+html.dark .text-gray-400 {
+  color: #6b7280 !important;
+}
+
+html.dark .border-gray-200 {
+  border-color: #374151 !important;
+}
+
+html.dark .border-gray-100 {
+  border-color: #1f2937 !important;
+}
+
+html.dark .border-b {
+  border-color: #374151;
+}
+
+html.dark .shadow-sm,
+html.dark .shadow {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) !important;
+}
+
+html.dark .shadow-lg,
+html.dark .shadow-2xl {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+
+html.dark input,
+html.dark textarea,
+html.dark select {
+  background-color: #374151;
+  border-color: #4b5563;
+  color: #f3f4f6;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #6b7280;
+}

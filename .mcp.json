@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "wapnix": {
+      "command": "node",
+      "args": ["d:/Process Excellence/whatsapp-business-plan/mcp-server/index.js"],
+      "env": {
+        "WAPNIX_DB_PATH": "d:/Process Excellence/whatsapp-business-plan/backend/data/app.db",
+        "WAPNIX_USER_ID": "1",
+        "WAPNIX_SERVER_URL": "http://localhost:4000"
+      }
+    }
+  }
+}
