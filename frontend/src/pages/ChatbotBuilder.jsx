@@ -622,6 +622,21 @@ function BulkMessages({ onOpenCampaign }) {
   useEffect(() => {
     api.get('/chatbot/flows').then(res => setAllFlows(res.data.flows || [])).catch(err => console.error('Failed to load flows:', err.message));
     refreshPipelines();
+
+    // Re-fetch contacts for pipeline campaigns restored from localStorage (they don't store contacts to save space)
+    campaigns.forEach((camp, idx) => {
+      if (camp.campaignDbId && (!camp.contacts || camp.contacts.length === 0)) {
+        api.get(`/campaigns/${camp.campaignDbId}/contacts`).then(res => {
+          const contacts = (res.data.contacts || []).map(c => ({
+            phone: c.phone,
+            name: c.contact_data?.fullname || c.contact_data?.name || '',
+            ...c.contact_data,
+          }));
+          const columns = contacts.length > 0 ? Object.keys(contacts[0]).filter(k => k !== 'phone') : [];
+          setCampaigns(prev => prev.map((p, i) => i === idx ? { ...p, contacts, columns: ['phone', ...columns] } : p));
+        }).catch(err => console.error(`Failed to reload contacts for ${camp.name}:`, err.message));
+      }
+    });
   }, []);
 
   // Re-fetch pipelines periodically and on window focus
@@ -688,7 +703,7 @@ function BulkMessages({ onOpenCampaign }) {
       }
 
       const newCampaign = {
-        id: Date.now(), name: `📋 ${camp.name}`,
+        id: Date.now(), campaignDbId: camp.id, name: `📋 ${camp.name}`,
         contacts, columns: ['phone', ...columns],
         message: autoMessage, isActive: false, sending: false, paused: false,
         batchId: null, batchStatus: null, statusMap: {},
@@ -709,11 +724,12 @@ function BulkMessages({ onOpenCampaign }) {
     }
   }
 
-  // Save campaigns to localStorage
+  // Save campaigns to localStorage (pipeline campaigns store only metadata, contacts re-fetched on load)
   useEffect(() => {
     if (campaigns.length > 0) {
       const toSave = campaigns.map(camp => ({
-        id: camp.id, name: camp.name, contacts: (camp.contacts || []).slice(0, 500), columns: camp.columns,
+        id: camp.id, campaignDbId: camp.campaignDbId || null, name: camp.name,
+        contacts: camp.campaignDbId ? [] : (camp.contacts || []), columns: camp.columns,
         message: camp.message, isActive: camp.isActive, batchId: camp.batchId, selectedFlowId: camp.selectedFlowId, plan: camp.plan,
       }));
       try { localStorage.setItem('bulk_campaigns', JSON.stringify(toSave)); } catch {}
