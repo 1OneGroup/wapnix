@@ -57,16 +57,12 @@ class SessionManager {
   }
 
   async startSession(userId, { pairingPhone } = {}) {
-    // If already connected, return status. If connecting/stuck, force restart.
+    // Don't start duplicate sessions
     if (this.sessions.has(userId)) {
       const existing = this.sessions.get(userId);
-      if (existing.isConnected) {
+      if (existing.isConnected || existing.isConnecting) {
         return existing.getStatus();
       }
-      // Force stop stuck/connecting session so we get a fresh QR
-      await existing.disconnect();
-      this.sessions.delete(userId);
-      this.queues.delete(userId);
     }
 
     // Get user plan for rate limits
