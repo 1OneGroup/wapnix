@@ -1,7 +1,7 @@
 # ============================================
 # Stage 1: Build Frontend
 # ============================================
-FROM node:18-slim AS frontend-build
+FROM node:22-slim AS frontend-build
 
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -12,7 +12,7 @@ RUN npm run build
 # ============================================
 # Stage 2: Install Backend Dependencies
 # ============================================
-FROM node:18-slim AS backend-deps
+FROM node:22-slim AS backend-deps
 
 RUN apt-get update && apt-get install -y \
     python3 \
@@ -28,7 +28,7 @@ RUN npm ci --omit=dev
 # ============================================
 # Stage 3: Production Image
 # ============================================
-FROM node:18-slim AS production
+FROM node:22-slim AS production
 
 WORKDIR /app
 
@@ -41,12 +41,19 @@ COPY --from=backend-deps /app/backend/node_modules ./backend/node_modules
 # Copy built frontend dist
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh ./
+RUN chmod +x docker-entrypoint.sh
+
 # Create data and uploads directories
 RUN mkdir -p /app/backend/data/auth_sessions \
     /app/backend/uploads/avatars \
-    /app/backend/uploads/email-attachments
+    /app/backend/uploads/email-attachments \
+    /app/backend/uploads/messages \
+    /app/backend/uploads/templates
 
 # Non-root user for security
+# Pre-create and chown volume directories so named volumes inherit correct ownership
 RUN groupadd -r wapnix && useradd -r -g wapnix -d /app wapnix \
     && chown -R wapnix:wapnix /app
 USER wapnix
@@ -56,7 +63,7 @@ ENV PORT=4000
 
 EXPOSE 4000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD node -e "fetch('http://localhost:4000/api/health').then(r=>{if(!r.ok)throw 1}).catch(()=>process.exit(1))"
 
-CMD ["node", "backend/server.js"]
+ENTRYPOINT ["./docker-entrypoint.sh"]
