@@ -60,7 +60,7 @@ router.post('/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
     const allPages = JSON.stringify(['dashboard', 'device', 'templates', 'contacts', 'send', 'chatbot', 'api', 'website']);
     const result = db.prepare(
-      'INSERT INTO users (email, password_hash, name, plan_id, is_approved, allowed_pages) VALUES (?, ?, ?, 1, 1, ?)'
+      'INSERT INTO users (email, password_hash, name, plan_id, is_approved, allowed_pages) VALUES (?, ?, ?, 1, 0, ?)'
     ).run(email.toLowerCase(), passwordHash, name || '', allPages);
 
     const userId = result.lastInsertRowid;
@@ -73,9 +73,7 @@ router.post('/register', async (req, res) => {
     // Seed default templates for new user
     seedDefaultTemplates(userId);
 
-    const token = jwt.sign({ userId }, config.jwtSecret, { expiresIn: config.jwtExpiresIn });
-
-    res.status(201).json({ token, userId });
+    res.status(201).json({ message: 'Registration successful. Please wait for admin approval.', userId });
   } catch (err) {
     console.error('Register error:', err.message);
     res.status(500).json({ error: 'Registration failed' });

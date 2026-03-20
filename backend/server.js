@@ -8,6 +8,7 @@ import db from './db/database.js';
 import { authenticate } from './middleware/auth.js';
 import sessionManager from './services/sessionManager.js';
 import { restorePhoneFilters } from './services/chatbotEngine.js';
+import { normalizePhone } from './shared/phoneUtils.js';
 
 // Routes
 import authRoutes from './routes/auth.js';
@@ -138,7 +139,9 @@ async function runFollowupScheduler() {
     for (const plan of duePlans) {
       console.log(`[followup] Executing plan ${plan.id}: ${plan.plan_label} (send ${plan.sends_done + 1}/${plan.total_sends})`);
 
-      const contacts = JSON.parse(plan.contacts_json);
+      let contacts;
+      try { contacts = JSON.parse(plan.contacts_json); }
+      catch (e) { console.error(`[followup] Plan ${plan.id}: corrupted contacts_json, skipping:`, e.message); continue; }
       const session = sessionManager.getSession(plan.user_id);
       if (!session || !session.isConnected) {
         // Retry in 30 minutes instead of skipping forever
@@ -151,9 +154,8 @@ async function runFollowupScheduler() {
       const queue = sessionManager.getQueue(plan.user_id);
 
       for (const contact of contacts) {
-        const phone = String(contact.phone || '').replace(/[^0-9]/g, '');
-        if (!phone || phone.length < 10) continue;
-        const normalized = phone.length === 10 ? '91' + phone : (phone.startsWith('91') ? phone : '91' + phone);
+        const normalized = normalizePhone(contact.phone);
+        if (!normalized || normalized.length < 10) continue;
         const jid = normalized + '@s.whatsapp.net';
 
         // Render per-contact variables
@@ -245,7 +247,9 @@ async function runCampaignScheduler() {
 
         const queue = sessionManager.getQueue(campaign.user_id);
         const jid = contact.phone + '@s.whatsapp.net';
-        const contactData = JSON.parse(contact.contact_data || '{}');
+        let contactData;
+        try { contactData = JSON.parse(contact.contact_data || '{}'); }
+        catch (e) { console.error(`[campaign] Contact ${contact.id}: corrupted contact_data, skipping:`, e.message); continue; }
 
         try {
           if (nextStep.step_type === 'message') {
@@ -277,7 +281,9 @@ async function runCampaignScheduler() {
             // Trigger chatbot flow
             const flowRow = db.prepare('SELECT * FROM chatbot_flows WHERE id = ?').get(nextStep.flow_id);
             if (flowRow) {
-              const flowSteps = JSON.parse(flowRow.steps_json);
+              let flowSteps;
+              try { flowSteps = JSON.parse(flowRow.steps_json); }
+              catch (e) { console.error(`[campaign] Flow ${flowRow.id}: corrupted steps_json, skipping:`, e.message); continue; }
               const firstStep = flowSteps[0];
               if (firstStep) {
                 let body = firstStep.message;

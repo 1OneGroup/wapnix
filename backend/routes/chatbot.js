@@ -348,12 +348,12 @@ router.post('/bulk-send', async (req, res) => {
 
     // Async sending via local Baileys session with pause/cancel support
     (async () => {
+      try {
       const session = sessionManager.getSession(userId);
       const queue = sessionManager.getQueue(userId);
 
       if (!session || !session.isConnected) {
         db.prepare("UPDATE messages SET status = 'failed', error_message = 'WhatsApp not connected' WHERE batch_id = ? AND status = 'queued'").run(batchId);
-        batchControl.delete(userId);
         console.log(`[bulk-send] Batch ${batchId} failed: WhatsApp not connected`);
         return;
       }
@@ -430,8 +430,10 @@ router.post('/bulk-send', async (req, res) => {
             .run('failed', err.message, r.id);
         }
       }
-      batchControl.delete(userId);
       console.log(`[bulk-send] Batch ${batchId} complete.`);
+      } finally {
+        batchControl.delete(userId);
+      }
     })();
   } catch (err) {
     console.error('[bulk-send] Unexpected error:', err);

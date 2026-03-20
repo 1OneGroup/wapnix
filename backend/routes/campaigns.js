@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../db/database.js';
 import { v4 as uuidv4 } from 'uuid';
+import { normalizePhone } from '../shared/phoneUtils.js';
 
 const router = Router();
 
@@ -198,24 +199,35 @@ router.post('/:id/enroll', (req, res) => {
     INSERT OR IGNORE INTO campaign_contacts (campaign_id, phone, contact_data, status)
     VALUES (?, ?, ?, 'active')
   `);
+  const reactivateContact = db.prepare(`
+    UPDATE campaign_contacts SET status = 'active', stop_reason = NULL, contact_data = ?
+    WHERE campaign_id = ? AND phone = ? AND status = 'stopped'
+  `);
 
   let enrolled = 0;
   let skipped = 0;
+  let reactivated = 0;
   for (const c of contacts) {
-    const phone = String(c.phone || '').replace(/\D/g, '');
+    const phone = normalizePhone(String(c.phone || ''));
     if (!phone || phone.length < 10) { skipped++; continue; }
     const data = { ...c };
     delete data.phone;
+    const dataJson = JSON.stringify(data);
     try {
-      const info = insertContact.run(campaign.id, phone, JSON.stringify(data));
-      if (info.changes > 0) enrolled++;
-      else skipped++;
+      const info = insertContact.run(campaign.id, phone, dataJson);
+      if (info.changes > 0) { enrolled++; }
+      else {
+        // Try to reactivate if stopped
+        const reInfo = reactivateContact.run(dataJson, campaign.id, phone);
+        if (reInfo.changes > 0) { reactivated++; }
+        else { skipped++; }
+      }
     } catch {
       skipped++;
     }
   }
 
-  res.json({ success: true, enrolled, skipped, total: contacts.length });
+  res.json({ success: true, enrolled, reactivated, skipped, total: contacts.length });
 });
 
 // Webhook enrollment (for n8n / external tools)
@@ -226,8 +238,8 @@ router.post('/webhook/:token', (req, res) => {
   const { phone, ...rest } = req.body;
   if (!phone) return res.status(400).json({ error: 'phone field is required' });
 
-  const normalized = String(phone).replace(/\D/g, '');
-  if (normalized.length < 10) return res.status(400).json({ error: 'Invalid phone number' });
+  const normalized = normalizePhone(String(phone));
+  if (!normalized || normalized.length < 10) return res.status(400).json({ error: 'Invalid phone number' });
 
   try {
     db.prepare(`
@@ -274,6 +286,35 @@ router.post('/:id/contacts/:contactId/stop', (req, res) => {
     .run(req.params.contactId, campaign.id);
 
   res.json({ success: true });
+});
+
+// Reactivate a stopped contact
+router.post('/:id/contacts/:contactId/reactivate', (req, res) => {
+  const campaign = db.prepare('SELECT id FROM campaigns WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  db.prepare("UPDATE campaign_contacts SET status = 'active', stop_reason = NULL WHERE id = ? AND campaign_id = ?")
+    .run(req.params.contactId, campaign.id);
+
+  res.json({ success: true });
+});
+
+// Delete selected contacts
+router.post('/:id/contacts/delete', (req, res) => {
+  const campaign = db.prepare('SELECT id FROM campaigns WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  const { contact_ids, all } = req.body;
+  let deleted = 0;
+  if (all) {
+    const info = db.prepare('DELETE FROM campaign_contacts WHERE campaign_id = ?').run(campaign.id);
+    deleted = info.changes;
+  } else if (contact_ids && Array.isArray(contact_ids) && contact_ids.length > 0) {
+    const placeholders = contact_ids.map(() => '?').join(',');
+    const info = db.prepare(`DELETE FROM campaign_contacts WHERE campaign_id = ? AND id IN (${placeholders})`).run(campaign.id, ...contact_ids);
+    deleted = info.changes;
+  }
+  res.json({ success: true, deleted });
 });
 
 // ── Per-step logs (analytics) ──

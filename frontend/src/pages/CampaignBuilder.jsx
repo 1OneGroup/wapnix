@@ -235,7 +235,7 @@ function CampaignEditor({ campaignId, onBack, onSaved }) {
                     <input type="number" min="0" value={step.day_offset} onChange={e => updateStep(idx, 'day_offset', parseInt(e.target.value) || 0)} className="w-full px-3 py-1.5 border rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-primary-ring)] focus:outline-none" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500 block mb-1">Send time</label>
+                    <label className="text-[10px] text-gray-500 block mb-1">Send time (UTC)</label>
                     <input type="time" value={step.send_time} onChange={e => updateStep(idx, 'send_time', e.target.value)} className="w-full px-3 py-1.5 border rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-primary-ring)] focus:outline-none" />
                   </div>
                   <div>
@@ -319,13 +319,16 @@ function CampaignEditor({ campaignId, onBack, onSaved }) {
 function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
   const [campaign, setCampaign] = useState(null);
   const [contacts, setContacts] = useState([]);
-  const [contactFilter, setContactFilter] = useState('');
+  const [contactFilter, setContactFilter] = useState('enrolled');
   const [showEnroll, setShowEnroll] = useState(false);
   const [csvText, setCsvText] = useState('');
   const [enrolling, setEnrolling] = useState(false);
+  const [enrollProgress, setEnrollProgress] = useState(null); // { percent, enrolled, reactivated, skipped, total, current, chunks }
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
-  const [showContacts, setShowContacts] = useState(false);
+  const [showContacts, setShowContacts] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   const loadCampaign = useCallback(() => {
     setLoading(true);
@@ -359,12 +362,64 @@ function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
   const stopContact = async (contactId) => {
     try {
       await api.post(`/campaigns/${campaignId}/contacts/${contactId}/stop`);
-      toast.success('Contact removed from campaign');
+      toast.success('Contact stopped');
       loadCampaign();
     } catch {
-      toast.error('Failed to remove contact');
+      toast.error('Failed to stop contact');
     }
   };
+
+  const reactivateContact = async (contactId) => {
+    try {
+      await api.post(`/campaigns/${campaignId}/contacts/${contactId}/reactivate`);
+      toast.success('Contact reactivated');
+      loadCampaign();
+    } catch {
+      toast.error('Failed to reactivate contact');
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return toast.error('Select contacts first');
+    if (!confirm(`Delete ${selectedIds.size} contact(s)?`)) return;
+    try {
+      const res = await api.post(`/campaigns/${campaignId}/contacts/delete`, { contact_ids: [...selectedIds] });
+      toast.success(`${res.data.deleted} contact(s) deleted`);
+      setSelectedIds(new Set());
+      loadCampaign();
+    } catch { toast.error('Delete failed'); }
+  };
+
+  const deleteAll = async () => {
+    if (!confirm(`Delete ALL ${contacts.length} contacts from this campaign?`)) return;
+    try {
+      const res = await api.post(`/campaigns/${campaignId}/contacts/delete`, { all: true });
+      toast.success(`${res.data.deleted} contact(s) deleted`);
+      setSelectedIds(new Set());
+      loadCampaign();
+    } catch { toast.error('Delete failed'); }
+  };
+
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const filteredEnrolled = (() => {
+    let list = showContacts ? contacts.filter(c => c.status === showContacts) : contacts;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(c =>
+        c.phone.includes(q) ||
+        (c.contact_data?.fullname || '').toLowerCase().includes(q) ||
+        (c.contact_data?.name || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  })();
 
   const enrollContacts = async () => {
     if (!csvText.trim()) return toast.error('Paste CSV data');
@@ -372,13 +427,27 @@ function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
     const lines = csvText.trim().split('\n');
     if (lines.length < 2) return toast.error('Need at least a header row and one contact');
 
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    // Parse CSV line respecting quoted fields
+    function parseLine(line) {
+      const result = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') { inQuotes = !inQuotes; }
+        else if (line[i] === ',' && !inQuotes) { result.push(current.trim()); current = ''; }
+        else { current += line[i]; }
+      }
+      result.push(current.trim());
+      return result;
+    }
+
+    const headers = parseLine(lines[0]).map(h => h.toLowerCase());
     const phoneIdx = headers.findIndex(h => h === 'phone' || h === 'mobile' || h === 'number' || h === 'phone number');
     if (phoneIdx === -1) return toast.error('CSV must have a phone/mobile column');
 
     const contactsList = [];
     for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(',').map(c => c.trim());
+      const cols = parseLine(lines[i]);
       if (!cols[phoneIdx]) continue;
       const contact = {};
       headers.forEach((h, idx) => {
@@ -394,16 +463,37 @@ function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
     if (contactsList.length === 0) return toast.error('No valid contacts found');
 
     setEnrolling(true);
+    const CHUNK_SIZE = 100;
+    const chunks = Math.ceil(contactsList.length / CHUNK_SIZE);
+    let totalEnrolled = 0, totalReactivated = 0, totalSkipped = 0;
+    setEnrollProgress({ percent: 0, enrolled: 0, reactivated: 0, skipped: 0, total: contactsList.length, current: 0, chunks });
+
     try {
-      const res = await api.post(`/campaigns/${campaignId}/enroll`, { contacts: contactsList });
-      toast.success(`Enrolled ${res.data.enrolled} contacts (${res.data.skipped} skipped)`);
+      for (let i = 0; i < chunks; i++) {
+        const chunk = contactsList.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        const res = await api.post(`/campaigns/${campaignId}/enroll`, { contacts: chunk });
+        totalEnrolled += res.data.enrolled || 0;
+        totalReactivated += res.data.reactivated || 0;
+        totalSkipped += res.data.skipped || 0;
+        const current = Math.min((i + 1) * CHUNK_SIZE, contactsList.length);
+        setEnrollProgress({
+          percent: Math.round((current / contactsList.length) * 100),
+          enrolled: totalEnrolled, reactivated: totalReactivated, skipped: totalSkipped,
+          total: contactsList.length, current, chunks,
+        });
+      }
+      const parts = [`${totalEnrolled} enrolled`];
+      if (totalReactivated) parts.push(`${totalReactivated} reactivated`);
+      if (totalSkipped) parts.push(`${totalSkipped} skipped`);
+      toast.success(parts.join(', '));
       setCsvText('');
-      setShowEnroll(false);
+      setContactFilter('enrolled');
       loadCampaign();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Enrollment failed');
     } finally {
       setEnrolling(false);
+      setTimeout(() => setEnrollProgress(null), 3000);
     }
   };
 
@@ -411,8 +501,12 @@ function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => setCsvText(ev.target.result);
+    reader.onload = (ev) => {
+      setCsvText(ev.target.result);
+      setContactFilter('add');
+    };
     reader.readAsText(file);
+    e.target.value = '';
   };
 
   if (loading || !campaign) return <div className="text-center py-12 text-gray-400">Loading campaign...</div>;
@@ -457,7 +551,7 @@ function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
             <Edit3 size={14} /> Edit
           </button>
           <button onClick={() => setShowEnroll(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)] transition">
-            <Users size={14} /> Enroll Contacts
+            <Users size={14} /> Enroll Campaign
           </button>
         </div>
       </div>
@@ -564,109 +658,192 @@ function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
         )}
       </div>
 
-      {/* Contacts section */}
-      <div className="bg-white rounded-xl shadow p-5 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <h4 className="font-semibold text-sm text-gray-800">Contacts ({contacts.length})</h4>
-          <button onClick={() => setShowContacts(!showContacts)} className="text-xs text-gray-500 hover:text-gray-700">
-            {showContacts ? 'Hide' : 'Show'} contacts
-          </button>
-        </div>
-
-        {showContacts && (
-          <>
-            <div className="flex gap-2 mb-3">
-              {['', 'active', 'completed', 'stopped'].map(f => (
-                <button
-                  key={f}
-                  onClick={() => setContactFilter(f)}
-                  className={`px-3 py-1 text-xs rounded-lg transition ${contactFilter === f ? 'bg-[var(--color-primary)] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                >
-                  {f || 'All'} {f === '' ? `(${contacts.length})` : `(${contacts.filter(c => c.status === f).length})`}
-                </button>
-              ))}
-            </div>
-
-            <div className="overflow-x-auto max-h-80 overflow-y-auto">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-white">
-                  <tr className="text-left text-gray-500 border-b">
-                    <th className="pb-2 pr-3">Phone</th>
-                    <th className="pb-2 pr-3">Name</th>
-                    <th className="pb-2 pr-3">Step</th>
-                    <th className="pb-2 pr-3">Status</th>
-                    <th className="pb-2 pr-3">Enrolled</th>
-                    <th className="pb-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredContacts.map(c => (
-                    <tr key={c.id} className="border-b last:border-0">
-                      <td className="py-2 pr-3 text-gray-700">{c.phone}</td>
-                      <td className="py-2 pr-3 text-gray-600">{c.contact_data?.fullname || c.contact_data?.name || '-'}</td>
-                      <td className="py-2 pr-3 text-gray-500">{c.current_step}/{campaign.steps?.length || 0}</td>
-                      <td className="py-2 pr-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                          c.status === 'active' ? 'bg-green-100 text-green-700' :
-                          c.status === 'completed' ? 'bg-blue-100 text-blue-700' :
-                          'bg-red-100 text-red-600'
-                        }`}>
-                          {c.status}
-                        </span>
-                        {c.stop_reason && <span className="ml-1 text-[10px] text-gray-400">({c.stop_reason})</span>}
-                      </td>
-                      <td className="py-2 pr-3 text-gray-400">{new Date(c.enrolled_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
-                      <td className="py-2">
-                        {c.status === 'active' && (
-                          <button onClick={() => stopContact(c.id)} className="text-gray-400 hover:text-red-500 transition" title="Remove from campaign">
-                            <StopCircle size={14} />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {filteredContacts.length === 0 && (
-                <div className="text-center py-6 text-gray-400 text-xs">No contacts found</div>
-              )}
-            </div>
-          </>
-        )}
-      </div>
 
       {/* Enroll Modal */}
       {showEnroll && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowEnroll(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-800">Enroll Contacts</h3>
+              <h3 className="font-semibold text-gray-800">Enroll Campaign</h3>
               <button onClick={() => setShowEnroll(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
             </div>
 
-            <p className="text-xs text-gray-500 mb-3">Paste CSV data or upload a CSV file. Must include a <strong>phone</strong> column. Other columns become contact variables.</p>
-
-            <div className="mb-3">
-              <label className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg cursor-pointer hover:bg-gray-200 transition text-sm w-fit">
-                <Upload size={14} /> Upload CSV
-                <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
-              </label>
-            </div>
-
-            <textarea
-              value={csvText}
-              onChange={e => setCsvText(e.target.value)}
-              rows={8}
-              placeholder={"phone,fullname,email\n919876543210,John Doe,john@example.com\n918765432109,Jane Smith,jane@example.com"}
-              className="w-full px-3 py-2 border rounded-lg text-xs font-mono focus:ring-2 focus:ring-[var(--color-primary-ring)] focus:outline-none resize-none mb-4"
-            />
-
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setShowEnroll(false)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition">Cancel</button>
-              <button onClick={enrollContacts} disabled={enrolling} className="px-4 py-2 text-sm bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)] transition disabled:opacity-50">
-                {enrolling ? 'Enrolling...' : 'Enroll'}
+            {/* Tabs: Enrolled / Add New */}
+            <div className="flex gap-1 mb-4 bg-gray-100 rounded-lg p-1">
+              <button onClick={() => setContactFilter('enrolled')} className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition ${contactFilter === 'enrolled' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}>
+                Enrolled ({contacts.length})
+              </button>
+              <button onClick={() => setContactFilter('add')} className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition ${contactFilter === 'add' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}>
+                + Add New
               </button>
             </div>
+
+            {/* Enrolled Contacts View */}
+            {contactFilter === 'enrolled' && (
+              <div className="flex-1 overflow-hidden flex flex-col">
+                {/* Search + Actions Bar */}
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <div className="flex-1 min-w-[150px]">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      placeholder="Search phone or name..."
+                      className="w-full px-3 py-1.5 border rounded-lg text-xs focus:ring-2 focus:ring-[var(--color-primary-ring)] focus:outline-none"
+                    />
+                  </div>
+                  {selectedIds.size > 0 && (
+                    <button onClick={deleteSelected} className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition font-medium">
+                      <Trash2 size={12} /> Delete ({selectedIds.size})
+                    </button>
+                  )}
+                  {contacts.length > 0 && (
+                    <button onClick={deleteAll} className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition font-medium">
+                      <Trash2 size={12} /> Delete All
+                    </button>
+                  )}
+                </div>
+
+                {/* Status Filter */}
+                <div className="flex gap-2 mb-3 flex-wrap">
+                  {['', 'active', 'completed', 'stopped'].map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setShowContacts(f === showContacts ? '' : f)}
+                      className={`px-2.5 py-1 text-[10px] rounded-full transition ${(showContacts || '') === f ? 'bg-[var(--color-primary)] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      {f || 'All'} ({f === '' ? contacts.length : contacts.filter(c => c.status === f).length})
+                    </button>
+                  ))}
+                </div>
+
+                <div className="overflow-auto flex-1">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-white">
+                      <tr className="text-left text-gray-500 border-b">
+                        <th className="pb-2 pr-2 w-6">
+                          <input
+                            type="checkbox"
+                            checked={filteredEnrolled.length > 0 && filteredEnrolled.every(c => selectedIds.has(c.id))}
+                            onChange={e => {
+                              if (e.target.checked) setSelectedIds(new Set(filteredEnrolled.map(c => c.id)));
+                              else setSelectedIds(new Set());
+                            }}
+                            className="rounded"
+                          />
+                        </th>
+                        <th className="pb-2 pr-3">Phone</th>
+                        <th className="pb-2 pr-3">Name</th>
+                        <th className="pb-2 pr-3">Step</th>
+                        <th className="pb-2 pr-3">Status</th>
+                        <th className="pb-2 pr-3">Enrolled</th>
+                        <th className="pb-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredEnrolled.map(c => (
+                        <tr key={c.id} className={`border-b last:border-0 ${selectedIds.has(c.id) ? 'bg-blue-50' : ''}`}>
+                          <td className="py-2 pr-2">
+                            <input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleSelect(c.id)} className="rounded" />
+                          </td>
+                          <td className="py-2 pr-3 text-gray-700 font-mono">{c.phone}</td>
+                          <td className="py-2 pr-3 text-gray-600">{c.contact_data?.fullname || c.contact_data?.name || '-'}</td>
+                          <td className="py-2 pr-3 text-gray-500">{c.current_step}/{campaign.steps?.length || 0}</td>
+                          <td className="py-2 pr-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                              c.status === 'active' ? 'bg-green-100 text-green-700' :
+                              c.status === 'completed' ? 'bg-blue-100 text-blue-700' :
+                              'bg-red-100 text-red-600'
+                            }`}>{c.status}</span>
+                            {c.stop_reason && <span className="ml-1 text-[10px] text-gray-400">({c.stop_reason})</span>}
+                          </td>
+                          <td className="py-2 pr-3 text-gray-400">{new Date(c.enrolled_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
+                          <td className="py-2">
+                            {c.status === 'active' && (
+                              <button onClick={() => stopContact(c.id)} className="text-red-400 hover:text-red-600 transition" title="Stop">
+                                <StopCircle size={14} />
+                              </button>
+                            )}
+                            {c.status === 'stopped' && (
+                              <button onClick={() => reactivateContact(c.id)} className="text-green-400 hover:text-green-600 transition" title="Reactivate">
+                                <Play size={14} />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {filteredEnrolled.length === 0 && (
+                    <div className="text-center py-8 text-gray-400 text-xs">
+                      {searchQuery ? 'No contacts match your search' : 'No contacts enrolled yet'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Add New Contacts View */}
+            {contactFilter === 'add' && (
+              <>
+                {/* Progress Bar */}
+                {enrollProgress && (
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium text-gray-700">
+                        {enrollProgress.percent < 100 ? 'Enrolling...' : 'Complete!'}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {enrollProgress.current} / {enrollProgress.total}
+                      </span>
+                    </div>
+                    {/* Progress bar */}
+                    <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ease-out ${enrollProgress.percent >= 100 ? 'bg-green-500' : 'bg-[var(--color-primary)]'}`}
+                        style={{ width: `${enrollProgress.percent}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-[10px] text-gray-500">{enrollProgress.percent}%</span>
+                      <div className="flex gap-3 text-[10px]">
+                        <span className="text-green-600">{enrollProgress.enrolled} enrolled</span>
+                        {enrollProgress.reactivated > 0 && <span className="text-blue-600">{enrollProgress.reactivated} reactivated</span>}
+                        {enrollProgress.skipped > 0 && <span className="text-gray-400">{enrollProgress.skipped} skipped</span>}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!enrolling && (
+                  <>
+                    <p className="text-xs text-gray-500 mb-3">Paste CSV data or upload a CSV file. Must include a <strong>phone</strong> column. Other columns become contact variables.</p>
+
+                    <div className="mb-3">
+                      <label className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg cursor-pointer hover:bg-gray-200 transition text-sm w-fit">
+                        <Upload size={14} /> Upload CSV
+                        <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
+                      </label>
+                    </div>
+
+                    <textarea
+                      value={csvText}
+                      onChange={e => setCsvText(e.target.value)}
+                      rows={8}
+                      placeholder={"phone,fullname,email\n919876543210,John Doe,john@example.com\n918765432109,Jane Smith,jane@example.com"}
+                      className="w-full px-3 py-2 border rounded-lg text-xs font-mono focus:ring-2 focus:ring-[var(--color-primary-ring)] focus:outline-none resize-none mb-4"
+                    />
+
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => setShowEnroll(false)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition">Cancel</button>
+                      <button onClick={enrollContacts} disabled={enrolling} className="px-4 py-2 text-sm bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)] transition disabled:opacity-50">
+                        Enroll
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -675,11 +852,11 @@ function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
 }
 
 // ── Main Campaign Builder Component ──
-export default function CampaignBuilder() {
-  const [view, setView] = useState('list'); // list, editor, dashboard
+export default function CampaignBuilder({ initialCampaignId, onClearInitial }) {
+  const [view, setView] = useState(initialCampaignId ? 'dashboard' : 'list');
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(initialCampaignId || null);
   const [editId, setEditId] = useState(null);
 
   const loadCampaigns = useCallback(() => {
@@ -691,6 +868,15 @@ export default function CampaignBuilder() {
   }, []);
 
   useEffect(() => { loadCampaigns(); }, [loadCampaigns]);
+
+  // Handle initialCampaignId changes from parent (e.g. Bulk section click)
+  useEffect(() => {
+    if (initialCampaignId) {
+      setSelectedId(initialCampaignId);
+      setView('dashboard');
+      onClearInitial?.();
+    }
+  }, [initialCampaignId]);
 
   const handleSelect = (id) => {
     setSelectedId(id);

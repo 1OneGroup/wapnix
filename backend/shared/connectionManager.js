@@ -28,6 +28,7 @@ export class ConnectionManager {
     this.isConnected = false;
     this.whatsappNumber = null;
     this.pairingPhone = null; // phone number for pairing code mode
+    this.conflictCount = 0; // track consecutive 440 conflicts
     this.logger = pino({ level: 'silent' });
   }
 
@@ -166,6 +167,12 @@ export class ConnectionManager {
           }
 
           if (isConflict) {
+            this.conflictCount++;
+            if (this.conflictCount >= 3) {
+              console.log(`[${this.name}] Session conflict (440) persists after ${this.conflictCount} attempts. Stopping. User must re-link device.`);
+              this.onStatusChange?.('failed', { reason: 'Session conflict — another device is using this WhatsApp. Please re-link from Device Link page.' });
+              return;
+            }
             this.onStatusChange?.('disconnected', { reason: 'conflict' });
             this._scheduleReconnect(30000, 'session conflict 440');
             return;
@@ -184,6 +191,7 @@ export class ConnectionManager {
           this.isConnected = true;
           this._latestQR = null;
           this.reconnectAttempts = 0;
+          this.conflictCount = 0;
           this.whatsappNumber = this.sock.user?.id?.split(':')[0] || null;
           console.log(`[${this.name}] Connected to WhatsApp! Number: ${this.whatsappNumber}`);
           this.onStatusChange?.('connected', { number: this.whatsappNumber });

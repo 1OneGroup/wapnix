@@ -575,7 +575,7 @@ function PlanCard({ plan: p, currentPlan, onSelect }) {
 }
 
 // ── Bulk Messages Module (Multi-Campaign) ──
-function BulkMessages() {
+function BulkMessages({ onOpenCampaign }) {
   // Migrate old single-sheet format to campaigns array
   const saved = useRef(null);
   if (!saved.current) {
@@ -600,6 +600,8 @@ function BulkMessages() {
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [bulkImages, setBulkImages] = useState([]);
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [savedCampaigns, setSavedCampaigns] = useState([]);
+  const [showCampaignPicker, setShowCampaignPicker] = useState(false);
   const fileRef = useRef(null);
   const msgRef = useRef(null);
   const bulkImgRef = useRef(null);
@@ -612,10 +614,100 @@ function BulkMessages() {
     setCampaigns(prev => prev.map((camp, i) => i === activeIdx ? { ...camp, ...updates } : camp));
   }
 
-  // Fetch all saved chatbot flows
-  useEffect(() => {
-    api.get('/chatbot/flows').then(res => setAllFlows(res.data.flows || [])).catch(() => {});
+  // Fetch all saved chatbot flows + saved campaigns from Campaign Builder
+  const refreshPipelines = useCallback(() => {
+    api.get('/campaigns').then(res => setSavedCampaigns(res.data.campaigns || [])).catch(err => console.error('Failed to load campaigns:', err.message));
   }, []);
+
+  useEffect(() => {
+    api.get('/chatbot/flows').then(res => setAllFlows(res.data.flows || [])).catch(err => console.error('Failed to load flows:', err.message));
+    refreshPipelines();
+  }, []);
+
+  // Re-fetch pipelines periodically and on window focus
+  useEffect(() => {
+    const onFocus = () => refreshPipelines();
+    window.addEventListener('focus', onFocus);
+    const interval = setInterval(refreshPipelines, 30000);
+    return () => { window.removeEventListener('focus', onFocus); clearInterval(interval); };
+  }, [refreshPipelines]);
+
+  // Add a Campaign Builder pipeline as a Bulk tab with auto-config
+  async function addCampaignAsTab(camp) {
+    try {
+      // Fetch contacts and campaign details (steps) in parallel
+      const [contRes, campRes] = await Promise.all([
+        api.get(`/campaigns/${camp.id}/contacts`),
+        api.get(`/campaigns/${camp.id}`),
+      ]);
+      const contacts = (contRes.data.contacts || []).map(c => ({
+        phone: c.phone,
+        name: c.contact_data?.fullname || c.contact_data?.name || '',
+        ...c.contact_data,
+      }));
+      if (contacts.length === 0) { toast.error('No contacts in this campaign'); return; }
+      const columns = contacts.length > 0 ? Object.keys(contacts[0]).filter(k => k !== 'phone') : [];
+
+      // Auto-detect flow and message from campaign steps
+      const steps = campRes.data.steps || [];
+      let autoFlowId = '';
+      let autoMessage = '';
+      let autoFlow = null;
+      let autoUseFlow = false;
+      let autoVarMapping = {};
+
+      // Find first message step for default message
+      const msgStep = steps.find(s => s.step_type === 'message' && s.message_text);
+      if (msgStep) autoMessage = msgStep.message_text;
+
+      // Find first chatbot step for auto-flow selection
+      const flowStep = steps.find(s => s.step_type === 'chatbot' && s.flow_id);
+      if (flowStep) {
+        autoFlowId = String(flowStep.flow_id);
+        try {
+          const flowRes = await api.get(`/chatbot/flows/${flowStep.flow_id}`);
+          const f = flowRes.data;
+          if (f && f.steps) {
+            f.stepCount = f.steps.length;
+            f.firstMessage = f.steps[0]?.message || '';
+            const flowVars = [];
+            for (const step of f.steps) {
+              for (const m of (step.message || '').matchAll(/\{\{(\w+)\}\}/g)) flowVars.push(m[1]);
+            }
+            f.flowVars = [...new Set(flowVars)];
+            autoFlow = f;
+            autoUseFlow = true;
+            // Auto-map flow vars to CSV columns
+            const cols = ['phone', ...columns];
+            for (const fv of f.flowVars) {
+              const match = cols.find(col => col.toLowerCase() === fv.toLowerCase());
+              if (match) autoVarMapping[fv] = match;
+            }
+          }
+        } catch {}
+      }
+
+      const newCampaign = {
+        id: Date.now(), name: `📋 ${camp.name}`,
+        contacts, columns: ['phone', ...columns],
+        message: autoMessage, isActive: false, sending: false, paused: false,
+        batchId: null, batchStatus: null, statusMap: {},
+        useFlow: autoUseFlow, activeFlow: autoFlow, selectedFlowId: autoFlowId,
+        plan: null, varMapping: autoVarMapping,
+      };
+      setCampaigns(prev => {
+        setActiveIdx(prev.length);
+        return [...prev, newCampaign];
+      });
+      setShowCampaignPicker(false);
+      const parts = [`"${camp.name}" — ${contacts.length} contacts loaded`];
+      if (autoFlow) parts.push(`Flow: ${autoFlow.name}`);
+      if (autoMessage) parts.push(`Message set`);
+      toast.success(parts.join(' | '));
+    } catch (err) {
+      toast.error('Failed to load campaign contacts');
+    }
+  }
 
   // Save campaigns to localStorage
   useEffect(() => {
@@ -630,19 +722,33 @@ function BulkMessages() {
     }
   }, [campaigns]);
 
-  // Resume polling for campaigns with batchIds on mount
+  // Resume polling for campaigns with batchIds — watches for new batchIds
   useEffect(() => {
     campaigns.forEach((camp) => {
       if (camp.batchId && !pollRefs.current[camp.id]) startPolling(camp.batchId, camp.id);
     });
-    return () => { Object.values(pollRefs.current).forEach(clearInterval); };
-  }, []);
+    return () => { Object.values(pollRefs.current).forEach(clearInterval); pollRefs.current = {}; };
+  }, [campaigns.map(c => c.batchId).join(',')]);
+
+  // Parse a CSV line respecting quoted fields
+  function parseCSVLine(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === '"') { inQuotes = !inQuotes; }
+      else if (line[i] === ',' && !inQuotes) { result.push(current.trim()); current = ''; }
+      else { current += line[i]; }
+    }
+    result.push(current.trim());
+    return result;
+  }
 
   function parseCSV(text, filename = 'Sheet') {
     const lines = text.split(/\r?\n/).filter(l => l.trim());
     if (lines.length < 2) { toast.error('CSV must have header row + at least 1 data row'); return; }
 
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, ''));
+    const headers = parseCSVLine(lines[0]).map(h => h.replace(/^["']|["']$/g, ''));
     const phoneIdx = headers.findIndex(h => /phone|mobile|number|whatsapp/i.test(h));
     if (phoneIdx === -1) { toast.error('No phone/mobile/number column found in CSV'); return; }
 
@@ -650,11 +756,11 @@ function BulkMessages() {
     const rows = [];
 
     for (let i = 1; i < lines.length; i++) {
-      const vals = lines[i].split(',').map(v => v.trim().replace(/^["']|["']$/g, ''));
+      const vals = parseCSVLine(lines[i]);
       if (!vals[phoneIdx]) continue;
       const row = {};
       headers.forEach((h, idx) => { row[h.toLowerCase().replace(/\s+/g, '_')] = vals[idx] || ''; });
-      row.phone = String(vals[phoneIdx]).replace(/[^0-9+]/g, '');
+      row.phone = String(vals[phoneIdx]).replace(/[^0-9]/g, '');
       if (!row.name && nameIdx !== -1) row.name = vals[nameIdx] || '';
       if (!row.name && row.fullname) row.name = row.fullname;
       if (row.phone) rows.push(row);
@@ -667,8 +773,10 @@ function BulkMessages() {
       batchId: null, batchStatus: null, statusMap: {},
       useFlow: false, activeFlow: null, selectedFlowId: '', plan: null, varMapping: {},
     };
-    setCampaigns(prev => [...prev, newCampaign]);
-    setActiveIdx(campaigns.length); // select the new campaign
+    setCampaigns(prev => {
+      setActiveIdx(prev.length);
+      return [...prev, newCampaign];
+    });
     toast.success(`"${newCampaign.name}" — ${rows.length} contacts loaded`);
   }
 
@@ -728,8 +836,8 @@ function BulkMessages() {
             const exactMatch = cols.find(col => col.toLowerCase() === fv.toLowerCase());
             if (exactMatch) autoMap[fv] = exactMatch;
           }
-          // Use functional update to avoid stale state
-          setCampaigns(prev => prev.map((camp, i) => i === activeIdx
+          // Use functional update — also check flowId still matches to avoid race condition
+          setCampaigns(prev => prev.map((camp, i) => i === activeIdx && camp.selectedFlowId === flowId
             ? { ...camp, activeFlow: f, useFlow: true, selectedFlowId: flowId, varMapping: autoMap }
             : camp
           ));
@@ -751,7 +859,7 @@ function BulkMessages() {
   }
 
   async function handleDeactivate() {
-    try { await api.post('/chatbot/sheet-deactivate'); } catch {}
+    try { await api.post('/chatbot/sheet-deactivate'); } catch (err) { console.error('Deactivate failed:', err.message); }
     updateC({ isActive: false, sending: false, paused: false });
     toast('Sheet deactivated.');
   }
@@ -840,9 +948,11 @@ function BulkMessages() {
 
   function startPolling(bid, campaignId) {
     if (pollRefs.current[campaignId]) clearInterval(pollRefs.current[campaignId]);
+    let errorCount = 0;
     pollRefs.current[campaignId] = setInterval(async () => {
       try {
         const res = await api.get(`/chatbot/bulk-status/${bid}`);
+        errorCount = 0;
         const map = {};
         for (const msg of res.data.messages) {
           map[msg.phone] = { status: msg.status, error: msg.error_message, sentAt: msg.sent_at };
@@ -853,7 +963,15 @@ function BulkMessages() {
           delete pollRefs.current[campaignId];
           setCampaigns(prev => prev.map(camp => camp.id === campaignId ? { ...camp, sending: false } : camp));
         }
-      } catch {}
+      } catch (err) {
+        errorCount++;
+        if (errorCount >= 5) {
+          clearInterval(pollRefs.current[campaignId]);
+          delete pollRefs.current[campaignId];
+          setCampaigns(prev => prev.map(camp => camp.id === campaignId ? { ...camp, sending: false } : camp));
+          toast.error('Status polling failed — please refresh to check status');
+        }
+      }
     }, 2000);
   }
 
@@ -875,7 +993,8 @@ function BulkMessages() {
   function normPhone(p) {
     let d = String(p || '').replace(/[^0-9]/g, '');
     if (d.startsWith('0')) d = d.slice(1);
-    if (d && !d.startsWith('91')) d = '91' + d;
+    if (d.length === 10) d = '91' + d;
+    else if (d.length > 0 && !d.startsWith('91')) d = '91' + d;
     return d;
   }
 
@@ -883,6 +1002,14 @@ function BulkMessages() {
 
   // ── Campaign color palette for tabs ──
   const CAMPAIGN_COLORS = ['#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
+
+  // Close campaign picker when clicking outside
+  useEffect(() => {
+    if (!showCampaignPicker) return;
+    const close = () => setShowCampaignPicker(false);
+    setTimeout(() => document.addEventListener('click', close), 0);
+    return () => document.removeEventListener('click', close);
+  }, [showCampaignPicker]);
 
   return (
     <div className="space-y-4">
@@ -943,16 +1070,118 @@ function BulkMessages() {
                 </div>
               );
             })}
-            {/* Quick add button in the row */}
+            {/* Quick add CSV button */}
             <div
               onClick={() => fileRef.current?.click()}
-              className="flex-shrink-0 rounded-lg px-4 py-2 cursor-pointer border-2 border-dashed border-gray-300 hover:border-indigo-400 transition flex items-center gap-2 text-gray-400 hover:text-indigo-600 min-w-[100px] justify-center"
+              className="flex-shrink-0 rounded-lg px-4 py-2 cursor-pointer border-2 border-dashed border-gray-300 hover:border-indigo-400 transition flex items-center gap-2 text-gray-400 hover:text-indigo-600 min-w-[80px] justify-center"
             >
-              <Plus size={14} /> <span className="text-xs">Add</span>
+              <Plus size={14} /> <span className="text-xs">CSV</span>
             </div>
+            {/* Add Campaign Builder pipeline */}
+            {savedCampaigns.length > 0 && (
+              <div className="relative flex-shrink-0" onClick={e => e.stopPropagation()}>
+                <div
+                  onClick={() => setShowCampaignPicker(!showCampaignPicker)}
+                  className="rounded-lg px-3 py-2 cursor-pointer border-2 border-dashed border-green-300 hover:border-green-500 transition flex items-center gap-1.5 text-green-500 hover:text-green-700"
+                >
+                  <Megaphone size={12} /> <span className="text-xs">Pipeline</span>
+                </div>
+                {showCampaignPicker && (
+                  <div className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-xl border z-[100] w-64 max-h-60 overflow-auto">
+                    <div className="px-3 py-2 border-b bg-gray-50 rounded-t-lg">
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase">Select Pipeline</p>
+                    </div>
+                    {savedCampaigns.map(sc => (
+                      <div
+                        key={sc.id}
+                        onClick={() => addCampaignAsTab(sc)}
+                        className="px-3 py-2.5 hover:bg-indigo-50 cursor-pointer border-b last:border-0 transition"
+                      >
+                        <p className="text-xs font-medium truncate">{sc.name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                            sc.status === 'active' ? 'bg-green-100 text-green-700' :
+                            sc.status === 'paused' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>{sc.status}</span>
+                          <span className="text-[10px] text-gray-400">{sc.contact_count || 0} contacts</span>
+                          <span className="text-[10px] text-gray-400">{sc.step_count || 0} steps</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* ── Saved Campaigns from Campaign Builder ── */}
+      {savedCampaigns.length > 0 && (
+        <div className="bg-white rounded-xl shadow p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <Megaphone size={16} className="text-indigo-600" />
+              Your Pipelines
+              <span className="text-xs text-gray-400">({savedCampaigns.length})</span>
+            </h3>
+            <p className="text-[10px] text-gray-400">Click "Add to Bulk" to load contacts as a tab above</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {savedCampaigns.map(camp => {
+              const statusStyle = {
+                draft: { bg: 'bg-gray-50 border-gray-200', badge: 'bg-gray-100 text-gray-600', icon: '📝' },
+                active: { bg: 'bg-green-50 border-green-200', badge: 'bg-green-100 text-green-700', icon: '🟢' },
+                paused: { bg: 'bg-yellow-50 border-yellow-200', badge: 'bg-yellow-100 text-yellow-700', icon: '⏸️' },
+                completed: { bg: 'bg-blue-50 border-blue-200', badge: 'bg-blue-100 text-blue-700', icon: '✅' },
+              }[camp.status] || { bg: 'bg-gray-50 border-gray-200', badge: 'bg-gray-100 text-gray-600', icon: '📋' };
+              const alreadyAdded = campaigns.some(c => c.name === `📋 ${camp.name}`);
+              return (
+                <div key={camp.id} className={`rounded-xl border p-4 ${statusStyle.bg} transition`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">{statusStyle.icon}</span>
+                        <p className="font-semibold text-sm truncate">{camp.name}</p>
+                      </div>
+                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${statusStyle.badge}`}>{camp.status}</span>
+                        <span className="text-[10px] text-gray-500">{camp.contact_count || 0} contacts</span>
+                        <span className="text-[10px] text-gray-500">{camp.step_count || 0} steps</span>
+                      </div>
+                      <div className="flex gap-3 mt-1.5 text-[10px]">
+                        {camp.active_contacts > 0 && <span className="text-green-600">{camp.active_contacts} active</span>}
+                        {camp.completed_contacts > 0 && <span className="text-blue-600">{camp.completed_contacts} done</span>}
+                        {camp.stopped_contacts > 0 && <span className="text-red-500">{camp.stopped_contacts} stopped</span>}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5 shrink-0">
+                      <button
+                        onClick={() => addCampaignAsTab(camp)}
+                        disabled={alreadyAdded}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                          alreadyAdded
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                        }`}
+                      >
+                        <Plus size={12} /> {alreadyAdded ? 'Added' : 'Add to Bulk'}
+                      </button>
+                      <button
+                        onClick={() => onOpenCampaign?.(camp.id)}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition"
+                      >
+                        <Eye size={12} /> Manage
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Active Campaign Detail ── */}
       {c && (<>
@@ -1427,7 +1656,7 @@ function Conversations() {
       const res = await api.get(`/chatbot/conversation-status${f ? `?status=${f}` : ''}`);
       setStatusContacts(res.data.contacts || []);
       setStatusCounts(res.data.counts || { active: 0, completed: 0, expired: 0 });
-    } catch {}
+    } catch (err) { console.error('Failed to load conversation status:', err.message); }
   }
 
   async function openConvo(phone) {
@@ -1676,8 +1905,8 @@ function QuickSend() {
   const imgRef = useRef(null);
 
   useEffect(() => {
-    api.get('/chatbot/flows').then(r => setSavedFlows(r.data.flows || [])).catch(() => {});
-    api.get('/messages?limit=5').then(r => setRecentSent(r.data.messages || [])).catch(() => {});
+    api.get('/chatbot/flows').then(r => setSavedFlows(r.data.flows || [])).catch(err => console.error('Failed to load flows:', err.message));
+    api.get('/messages?limit=5').then(r => setRecentSent(r.data.messages || [])).catch(err => console.error('Failed to load recent messages:', err.message));
   }, []);
 
   const handleFlowChange = async (id) => {
@@ -1739,6 +1968,11 @@ function QuickSend() {
       setResult(res.data);
       toast.success('Message sent!');
       setRecentSent(prev => [{ phone, body: message, status: 'queued', sent_at: new Date().toISOString(), id: res.data.id }, ...prev.slice(0, 4)]);
+      setPhone('');
+      setMessage('');
+      setImages([]);
+      setSelectedFlow('');
+      setSelectedFlowData(null);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to send');
     } finally {
@@ -1985,6 +2219,7 @@ export default function ChatbotBuilder() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [savedFlows, setSavedFlows] = useState([]);
   const [activeFlowId, setActiveFlowId] = useState(null);
+  const [openCampaignId, setOpenCampaignId] = useState(null);
 
   // Load saved flows from backend
   const loadFlows = () => {
@@ -1996,9 +2231,9 @@ export default function ChatbotBuilder() {
         // Auto-load active flow with all saved data (including notify)
         api.get(`/chatbot/flows/${active.id}`).then(r => {
           setFlow({ ...r.data, dbId: r.data.id, steps: r.data.steps });
-        }).catch(() => {});
+        }).catch(err => console.error('Failed to load active flow:', err.message));
       }
-    }).catch(() => {});
+    }).catch(err => console.error('Failed to load flows:', err.message));
   };
 
   useEffect(() => { loadFlows(); }, []);
@@ -2182,7 +2417,7 @@ export default function ChatbotBuilder() {
       </div>
 
       {/* Campaign Builder Tab */}
-      {activeTab === 'campaign' && <CampaignBuilder />}
+      {activeTab === 'campaign' && <CampaignBuilder initialCampaignId={openCampaignId} onClearInitial={() => setOpenCampaignId(null)} />}
 
       {/* Quick Send Tab */}
       {activeTab === 'quick' && <QuickSend />}
@@ -2190,8 +2425,10 @@ export default function ChatbotBuilder() {
       {/* Conversations Tab */}
       {activeTab === 'conversations' && <Conversations />}
 
-      {/* Bulk Messages Tab */}
-      {activeTab === 'bulk' && <BulkMessages />}
+      {/* Bulk Messages Tab — kept mounted to preserve polling & state */}
+      <div style={{ display: activeTab === 'bulk' ? 'block' : 'none' }}>
+        <BulkMessages onOpenCampaign={(id) => { setOpenCampaignId(id); setActiveTab('campaign'); }} />
+      </div>
 
       {/* Builder Tab */}
       {activeTab === 'builder' && (<>
