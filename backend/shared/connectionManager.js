@@ -1,5 +1,7 @@
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers } from '@whiskeysockets/baileys';
+import path from 'path';
 import pino from 'pino';
+import { WarmUpManager, HealthMonitor, humanDelay, simulateTyping } from './antiBan.js';
 
 /**
  * Reusable Baileys connection manager with callback support for multi-tenant SaaS.
@@ -30,6 +32,11 @@ export class ConnectionManager {
     this.pairingPhone = null; // phone number for pairing code mode
     this.conflictCount = 0; // track consecutive 440 conflicts
     this.logger = pino({ level: 'silent' });
+
+    // Anti-ban: warm-up manager + health monitor
+    const warmUpFile = path.join(authFolder, '..', `warmup_${name}.json`);
+    this.warmUp = new WarmUpManager(warmUpFile);
+    this.health = new HealthMonitor(name);
   }
 
   _getDisconnectCode(lastDisconnect) {
@@ -113,7 +120,7 @@ export class ConnectionManager {
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
 
-      this.sock = makeWASocket({
+      const rawSock = makeWASocket({
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
@@ -122,6 +129,29 @@ export class ConnectionManager {
         markOnlineOnConnect: true,
         syncFullHistory: false,
         getMessage: async () => ({ conversation: '' }),
+      });
+
+      // Wrap with anti-ban protection (rate limiting, warm-up, health monitoring)
+      this.sock = wrapSocket(rawSock, {
+        rateLimiter: {
+          maxPerMinute: 8,
+          maxPerHour: 200,
+          maxPerDay: 1500,
+          minDelayMs: 1500,
+          maxDelayMs: 5000,
+        },
+        warmUp: {
+          warmUpDays: 7,
+          day1Limit: 20,
+          growthFactor: 1.8,
+        },
+        health: {
+          autoPauseAt: 'high',
+          onRiskChange: (status) => {
+            console.log(`[${this.name}] Anti-ban risk: ${status.level} (score: ${status.score})`);
+          },
+        },
+        logging: false,
       });
 
       // If pairing code mode and code not yet sent, request it
@@ -154,6 +184,7 @@ export class ConnectionManager {
         if (connection === 'close') {
           this.isConnected = false;
           this._stopKeepAlive();
+          this.health.recordDisconnect();
           const statusCode = this._getDisconnectCode(lastDisconnect);
           const isLoggedOut = statusCode === DisconnectReason.loggedOut;
           const isConflict = statusCode === 440;
@@ -245,10 +276,39 @@ export class ConnectionManager {
       this._scheduleReconnect(2000, 'send requested while disconnected');
       throw new Error(`[${this.name}] WhatsApp not connected.`);
     }
-    if (this.messageQueue) {
-      return this.messageQueue.enqueue(this.name, this.sock, jid, content);
+
+    // Anti-ban: check health risk
+    if (this.health.shouldPause()) {
+      console.log(`[${this.name}] Anti-ban: HIGH RISK (score: ${this.health.getScore()}). Pausing sends.`);
+      throw new Error(`[${this.name}] Sending paused due to high risk score. Try again later.`);
     }
-    return this.sock.sendMessage(jid, content);
+
+    // Anti-ban: warm-up daily limit check
+    if (!this.warmUp.canSend()) {
+      const ws = this.warmUp.getStatus();
+      console.log(`[${this.name}] Anti-ban: Warm-up day ${ws.day} limit reached (${ws.sentToday}/${ws.dailyLimit}).`);
+      throw new Error(`[${this.name}] Daily warm-up limit reached (${ws.sentToday}/${ws.dailyLimit}). Try tomorrow.`);
+    }
+
+    // Anti-ban: simulate typing before text messages
+    if (content.text || content.conversation) {
+      await simulateTyping(this.sock, jid, humanDelay(1200, 500));
+    }
+
+    try {
+      let result;
+      if (this.messageQueue) {
+        result = await this.messageQueue.enqueue(this.name, this.sock, jid, content);
+      } else {
+        result = await this.sock.sendMessage(jid, content);
+      }
+      this.warmUp.recordSend();
+      this.health.recordSuccess();
+      return result;
+    } catch (err) {
+      this.health.recordFailure();
+      throw err;
+    }
   }
 
   async logout() {
@@ -285,6 +345,10 @@ export class ConnectionManager {
       name: this.name,
       connected: this.isConnected,
       number: this.whatsappNumber,
+      antiBan: {
+        warmUp: this.warmUp.getStatus(),
+        health: this.health.getStatus(),
+      },
     };
   }
 }

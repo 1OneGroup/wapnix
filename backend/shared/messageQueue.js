@@ -1,8 +1,10 @@
+import { humanDelay } from './antiBan.js';
+
 /**
  * Per-connection, per-recipient message queue with smart rate limiting.
  *
  * - Single sends (e.g. n8n /send) execute instantly if no recent send to same JID.
- * - Consecutive sends to the same recipient are spaced by defaultDelayMs.
+ * - Consecutive sends to the same recipient are spaced by defaultDelayMs + human jitter.
  * - Global rate limits: max messages per minute and per hour.
  * - Failed sends are retried with exponential backoff.
  *
@@ -96,7 +98,9 @@ export class MessageQueue {
       const elapsed = now - lastSend;
 
       if (elapsed < this.defaultDelayMs && lastSend > 0) {
-        await this._delay(this.defaultDelayMs - elapsed);
+        // Add human-like jitter to avoid robotic send patterns
+        const jitter = humanDelay(this.defaultDelayMs - elapsed, 500);
+        await this._delay(jitter);
       }
 
       // Send with retry
