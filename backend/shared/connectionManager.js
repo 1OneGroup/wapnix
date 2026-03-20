@@ -120,7 +120,7 @@ export class ConnectionManager {
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
 
-      const rawSock = makeWASocket({
+      this.sock = makeWASocket({
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
@@ -129,29 +129,6 @@ export class ConnectionManager {
         markOnlineOnConnect: true,
         syncFullHistory: false,
         getMessage: async () => ({ conversation: '' }),
-      });
-
-      // Wrap with anti-ban protection (rate limiting, warm-up, health monitoring)
-      this.sock = wrapSocket(rawSock, {
-        rateLimiter: {
-          maxPerMinute: 8,
-          maxPerHour: 200,
-          maxPerDay: 1500,
-          minDelayMs: 1500,
-          maxDelayMs: 5000,
-        },
-        warmUp: {
-          warmUpDays: 7,
-          day1Limit: 20,
-          growthFactor: 1.8,
-        },
-        health: {
-          autoPauseAt: 'high',
-          onRiskChange: (status) => {
-            console.log(`[${this.name}] Anti-ban risk: ${status.level} (score: ${status.score})`);
-          },
-        },
-        logging: false,
       });
 
       // If pairing code mode and code not yet sent, request it
@@ -290,9 +267,9 @@ export class ConnectionManager {
       throw new Error(`[${this.name}] Daily warm-up limit reached (${ws.sentToday}/${ws.dailyLimit}). Try tomorrow.`);
     }
 
-    // Anti-ban: simulate typing before text messages
+    // Anti-ban: simulate typing before text messages (3-6 sec like a real person)
     if (content.text || content.conversation) {
-      await simulateTyping(this.sock, jid, humanDelay(1200, 500));
+      await simulateTyping(this.sock, jid, humanDelay(4000, 1500));
     }
 
     try {

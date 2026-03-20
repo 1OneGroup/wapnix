@@ -98,8 +98,8 @@ export class MessageQueue {
       const elapsed = now - lastSend;
 
       if (elapsed < this.defaultDelayMs && lastSend > 0) {
-        // Add human-like jitter to avoid robotic send patterns
-        const jitter = humanDelay(this.defaultDelayMs - elapsed, 500);
+        // Add human-like jitter to avoid robotic send patterns (±3 sec random variation)
+        const jitter = humanDelay(this.defaultDelayMs - elapsed, 3000);
         await this._delay(jitter);
       }
 

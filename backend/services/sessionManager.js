@@ -57,12 +57,16 @@ class SessionManager {
   }
 
   async startSession(userId, { pairingPhone } = {}) {
-    // Don't start duplicate sessions
+    // If already connected, return status. If connecting/stuck, force restart.
     if (this.sessions.has(userId)) {
       const existing = this.sessions.get(userId);
-      if (existing.isConnected || existing.isConnecting) {
+      if (existing.isConnected) {
         return existing.getStatus();
       }
+      // Force stop stuck/connecting session so we get a fresh QR
+      await existing.disconnect();
+      this.sessions.delete(userId);
+      this.queues.delete(userId);
     }
 
     // Get user plan for rate limits
@@ -78,11 +82,11 @@ class SessionManager {
     const authFolder = path.join(config.authSessionsDir, session.auth_folder);
     if (!fs.existsSync(authFolder)) fs.mkdirSync(authFolder, { recursive: true });
 
-    // Create per-user rate-limited queue
+    // Create per-user rate-limited queue with safe anti-ban delays
     const queue = new MessageQueue({
-      defaultDelayMs: 1500,
-      maxPerMinute: user.rate_per_minute,
-      maxPerHour: user.rate_per_hour,
+      defaultDelayMs: 15000,  // 15 sec minimum gap between messages (human-like)
+      maxPerMinute: Math.min(user.rate_per_minute, 4),  // max 4/min (every ~15s)
+      maxPerHour: Math.min(user.rate_per_hour, 120),     // max 120/hr
     });
     this.queues.set(userId, queue);
 

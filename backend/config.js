@@ -12,9 +12,12 @@ export default {
   cors: {
     origin: process.env.CORS_ORIGIN || [
       'http://localhost:5173',
+      'http://localhost:4000',
       'http://192.168.31.239:5173',
-      /\.ngrok-free\.app$/,
+      'http://72.61.170.222:4000',
+      /\.ngrok-free\.(app|dev)$/,
       /\.ngrok\.io$/,
+      /^https?:\/\/.*\.ngrok/,
     ],
   },
 };

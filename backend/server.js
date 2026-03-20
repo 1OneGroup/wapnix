@@ -128,6 +128,15 @@ io.on('connection', (socket) => {
   const status = sessionManager.getSessionStatus(userId);
   socket.emit('session:status', status);
 
+  // Send latest QR if available (handles page refresh / late socket connect)
+  const conn = sessionManager.getSession(userId);
+  if (conn) {
+    const latestQR = conn.getLatestQR();
+    if (latestQR && !conn.isConnected) {
+      socket.emit('qr', latestQR);
+    }
+  }
+
   socket.on('disconnect', () => {
     console.log(`Socket disconnected: user ${userId}`);
   });
