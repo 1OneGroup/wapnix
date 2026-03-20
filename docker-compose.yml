@@ -8,6 +8,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=4000
+      - JWT_SECRET=${JWT_SECRET:-wapnix-default-secret-change-me-in-production}
     volumes:
       - wapnix-data:/app/backend/data
       - wapnix-uploads:/app/backend/uploads

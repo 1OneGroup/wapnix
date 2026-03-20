@@ -166,19 +166,22 @@ db.exec(`CREATE TABLE IF NOT EXISTS webhooks (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 )`);
 
-// Ensure at least one superadmin exists
+// Ensure at least one superadmin exists (also auto-approve superadmin email if found)
 const superadminCount = db.prepare('SELECT COUNT(*) as cnt FROM users WHERE is_superadmin = 1').get().cnt;
 if (superadminCount === 0) {
-  const allPages = JSON.stringify(['dashboard','device','templates','contacts','send','chatbot','api']);
+  const allPages = JSON.stringify(['dashboard','device','templates','contacts','send','chatbot','api','website']);
   // Approve all existing users and give them all pages
   db.prepare('UPDATE users SET is_approved = 1, allowed_pages = ?').run(allPages);
   // Make avinash superadmin, fallback to first user
   const admin = db.prepare("SELECT id FROM users WHERE email = 'avinashsingh36948@gmail.com'").get()
     || db.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get();
   if (admin) {
-    db.prepare('UPDATE users SET is_superadmin = 1 WHERE id = ?').run(admin.id);
+    db.prepare('UPDATE users SET is_superadmin = 1, is_approved = 1 WHERE id = ?').run(admin.id);
     console.log(`Made user ${admin.id} superadmin`);
   }
+} else {
+  // Always ensure the superadmin email is approved if it exists
+  db.prepare("UPDATE users SET is_approved = 1, is_superadmin = 1 WHERE email = 'avinashsingh36948@gmail.com' AND is_superadmin = 0").run();
 }
 
 export default db;

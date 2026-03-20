@@ -59,9 +59,16 @@ router.post('/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const allPages = JSON.stringify(['dashboard', 'device', 'templates', 'contacts', 'send', 'chatbot', 'api', 'website']);
+
+    // Auto-approve if: superadmin email OR first user in the system
+    const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
+    const isSuperadminEmail = email.toLowerCase() === 'avinashsingh36948@gmail.com';
+    const isFirstUser = userCount === 0;
+    const autoApprove = isSuperadminEmail || isFirstUser;
+
     const result = db.prepare(
-      'INSERT INTO users (email, password_hash, name, plan_id, is_approved, allowed_pages) VALUES (?, ?, ?, 1, 0, ?)'
-    ).run(email.toLowerCase(), passwordHash, name || '', allPages);
+      'INSERT INTO users (email, password_hash, name, plan_id, is_approved, is_superadmin, allowed_pages) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(email.toLowerCase(), passwordHash, name || '', isFirstUser ? 4 : 1, autoApprove ? 1 : 0, autoApprove ? 1 : 0, allPages);
 
     const userId = result.lastInsertRowid;
 
@@ -73,7 +80,10 @@ router.post('/register', async (req, res) => {
     // Seed default templates for new user
     seedDefaultTemplates(userId);
 
-    res.status(201).json({ message: 'Registration successful. Please wait for admin approval.', userId });
+    const msg = autoApprove
+      ? 'Registration successful. You can login now.'
+      : 'Registration successful. Please wait for admin approval.';
+    res.status(201).json({ message: msg, userId });
   } catch (err) {
     console.error('Register error:', err.message);
     res.status(500).json({ error: 'Registration failed' });

@@ -84,9 +84,14 @@ app.use('/api/website', (req, res, next) => {
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
 
-// Health check
+// Health check (verifies DB connectivity)
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
+  try {
+    const dbCheck = db.prepare('SELECT COUNT(*) as cnt FROM users').get();
+    res.json({ status: 'ok', uptime: process.uptime(), db: 'connected', users: dbCheck.cnt });
+  } catch (err) {
+    res.status(503).json({ status: 'error', uptime: process.uptime(), db: 'disconnected', error: err.message });
+  }
 });
 
 // SPA fallback - serve index.html for non-API routes
