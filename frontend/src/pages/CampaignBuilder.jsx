@@ -532,21 +532,6 @@ function CampaignDashboard({ campaignId, onBack, onEdit, onRefresh }) {
           &larr; Back
         </button>
         <div className="flex items-center gap-2 flex-wrap">
-          {campaign.status === 'draft' && (
-            <button onClick={() => changeStatus('activate')} disabled={!!actionLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50">
-              <Play size={14} /> {actionLoading === 'activate' ? 'Activating...' : 'Activate'}
-            </button>
-          )}
-          {campaign.status === 'active' && (
-            <button onClick={() => changeStatus('pause')} disabled={!!actionLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition disabled:opacity-50">
-              <Pause size={14} /> Pause
-            </button>
-          )}
-          {campaign.status === 'paused' && (
-            <button onClick={() => changeStatus('resume')} disabled={!!actionLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50">
-              <RotateCcw size={14} /> Resume
-            </button>
-          )}
           <button onClick={() => onEdit(campaignId)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition">
             <Edit3 size={14} /> Edit
           </button>
