@@ -32,7 +32,7 @@ export function renderTemplate(body, variables = {}) {
  * @param {Array<{url: string, caption?: string}>} [opts.media] - Media attachments (file paths)
  * @returns {Promise<{id: number, phone: string, status: string}>}
  */
-export async function sendSingle(userId, { phone, message, templateId, variables, media }) {
+export async function sendSingle(userId, { phone, message, templateId, variables, media, skipUsageIncrement = false }) {
   const normalized = normalizePhone(phone);
   if (!normalized) throw new Error('Invalid phone number');
 
@@ -90,7 +90,7 @@ export async function sendSingle(userId, { phone, message, templateId, variables
     .then(() => {
       db.prepare('UPDATE messages SET status = ?, sent_at = ? WHERE id = ?')
         .run('sent', new Date().toISOString(), msgId);
-      incrementDailyUsage(userId);
+      if (!skipUsageIncrement) incrementDailyUsage(userId);
     })
     .catch((err) => {
       db.prepare('UPDATE messages SET status = ?, error_message = ? WHERE id = ?')
