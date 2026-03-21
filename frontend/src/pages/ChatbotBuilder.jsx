@@ -1680,6 +1680,26 @@ function BulkMessages({ onOpenCampaign }) {
 
       </>)}
 
+      {/* Warm-up Limit Reached Popup */}
+      {showLimitPopup && limitPopupData && (
+        <WarmUpLimitPopup
+          currentDay={limitPopupData.day}
+          limit={limitPopupData.limit}
+          sent={limitPopupData.sent}
+          remaining={limitPopupData.remaining}
+          onStop={() => { setShowLimitPopup(false); setLimitPopupData(null); }}
+          onSwitch={(nextDay) => {
+            setWarmupDay(nextDay);
+            setWarmupSent(0);
+            localStorage.setItem('bulk_warmup_day', String(nextDay));
+            localStorage.setItem('bulk_warmup_sent', '0');
+            setShowLimitPopup(false);
+            setLimitPopupData(null);
+            toast.success(`Switched to Day ${nextDay <= 7 ? nextDay : '8+'}! Limit: ${nextDay <= 7 ? WARMUP_LIMITS[nextDay - 1] : 'Unlimited'} messages`);
+          }}
+        />
+      )}
+
     </div>
   );
 }
@@ -2265,25 +2285,6 @@ function QuickSend() {
         </div>
       )}
 
-      {/* Warm-up Limit Reached Popup */}
-      {showLimitPopup && limitPopupData && (
-        <WarmUpLimitPopup
-          currentDay={limitPopupData.day}
-          limit={limitPopupData.limit}
-          sent={limitPopupData.sent}
-          remaining={limitPopupData.remaining}
-          onStop={() => { setShowLimitPopup(false); setLimitPopupData(null); }}
-          onSwitch={(nextDay) => {
-            setWarmupDay(nextDay);
-            setWarmupSent(0);
-            localStorage.setItem('bulk_warmup_day', String(nextDay));
-            localStorage.setItem('bulk_warmup_sent', '0');
-            setShowLimitPopup(false);
-            setLimitPopupData(null);
-            toast.success(`Switched to Day ${nextDay <= 7 ? nextDay : '8+'}! Limit: ${nextDay <= 7 ? WARMUP_LIMITS[nextDay - 1] : 'Unlimited'} messages`);
-          }}
-        />
-      )}
     </div>
   );
 }
