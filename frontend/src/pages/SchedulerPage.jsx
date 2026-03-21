@@ -35,7 +35,7 @@ export default function SchedulerPage() {
 
   const loadSchedulers = useCallback(async () => {
     try {
-      const { data } = await client.get('/api/schedulers');
+      const { data } = await client.get('/schedulers');
       setSchedulers(data.schedulers);
     } catch (err) {
       toast.error('Failed to load schedulers');
@@ -45,7 +45,7 @@ export default function SchedulerPage() {
   const loadSchedulerDetail = useCallback(async (id) => {
     try {
       setLoading(true);
-      const { data } = await client.get(`/api/schedulers/${id}`);
+      const { data } = await client.get(`/schedulers/${id}`);
       setScheduler(data.scheduler);
       setRules(data.rules);
       setCsvColumns(data.csvColumns);
@@ -70,7 +70,7 @@ export default function SchedulerPage() {
   const handleCreate = async () => {
     if (!createForm.name.trim()) return toast.error('Name is required');
     try {
-      const { data } = await client.post('/api/schedulers', createForm);
+      const { data } = await client.post('/schedulers', createForm);
       toast.success('Scheduler created');
       setShowCreate(false);
       setCreateForm({ name: '', description: '', send_time: '00:00', timezone: 'Asia/Kolkata', catch_up_past_dates: false });
@@ -83,7 +83,7 @@ export default function SchedulerPage() {
 
   const handleUpdateSettings = async () => {
     try {
-      await client.put(`/api/schedulers/${selectedId}`, settingsForm);
+      await client.put(`/schedulers/${selectedId}`, settingsForm);
       toast.success('Settings saved');
       loadSchedulerDetail(selectedId);
     } catch (err) {
@@ -93,7 +93,7 @@ export default function SchedulerPage() {
 
   const handleActivate = async () => {
     try {
-      await client.post(`/api/schedulers/${selectedId}/activate`);
+      await client.post(`/schedulers/${selectedId}/activate`);
       toast.success('Scheduler activated');
       loadSchedulerDetail(selectedId);
       loadSchedulers();
@@ -104,7 +104,7 @@ export default function SchedulerPage() {
 
   const handlePause = async () => {
     try {
-      await client.post(`/api/schedulers/${selectedId}/pause`);
+      await client.post(`/schedulers/${selectedId}/pause`);
       toast.success('Scheduler paused');
       loadSchedulerDetail(selectedId);
       loadSchedulers();
@@ -116,7 +116,7 @@ export default function SchedulerPage() {
   const handleDelete = async () => {
     if (!confirm('Delete this scheduler and all its data?')) return;
     try {
-      await client.delete(`/api/schedulers/${selectedId}`);
+      await client.delete(`/schedulers/${selectedId}`);
       toast.success('Scheduler deleted');
       setSelectedId(null);
       setScheduler(null);
@@ -316,17 +316,17 @@ function RulesTab({ schedulerId, rules, csvColumns, onRefresh }) {
   const [form, setForm] = useState({ name: '', date_column: '', template_id: '' });
 
   useEffect(() => {
-    client.get('/api/templates').then(({ data }) => setTemplates(data.templates || [])).catch(() => {});
+    client.get('/templates').then(({ data }) => setTemplates(data.templates || [])).catch(() => {});
   }, []);
 
   const handleSave = async (isEdit = false) => {
     if (!form.name || !form.date_column || !form.template_id) return toast.error('All fields are required');
     try {
       if (isEdit) {
-        await client.put(`/api/schedulers/${schedulerId}/rules/${editingId}`, form);
+        await client.put(`/schedulers/${schedulerId}/rules/${editingId}`, form);
         toast.success('Rule updated');
       } else {
-        await client.post(`/api/schedulers/${schedulerId}/rules`, form);
+        await client.post(`/schedulers/${schedulerId}/rules`, form);
         toast.success('Rule added');
       }
       setShowAdd(false);
@@ -341,7 +341,7 @@ function RulesTab({ schedulerId, rules, csvColumns, onRefresh }) {
   const handleDelete = async (ruleId) => {
     if (!confirm('Delete this rule?')) return;
     try {
-      await client.delete(`/api/schedulers/${schedulerId}/rules/${ruleId}`);
+      await client.delete(`/schedulers/${schedulerId}/rules/${ruleId}`);
       toast.success('Rule deleted');
       onRefresh();
     } catch (err) {
@@ -448,7 +448,7 @@ function ContactsTab({ schedulerId, onRefresh }) {
 
   const loadContacts = useCallback(async () => {
     try {
-      const { data } = await client.get(`/api/schedulers/${schedulerId}/contacts`, { params: { page, search, limit: 50 } });
+      const { data } = await client.get(`/schedulers/${schedulerId}/contacts`, { params: { page, search, limit: 50 } });
       setContacts(data.contacts);
       setTotal(data.total);
     } catch (err) {
@@ -512,7 +512,7 @@ function ContactsTab({ schedulerId, onRefresh }) {
     for (let i = 0; i < csvParsed.rows.length; i += chunkSize) {
       const chunk = csvParsed.rows.slice(i, i + chunkSize);
       try {
-        const { data } = await client.post(`/api/schedulers/${schedulerId}/contacts/upload`, {
+        const { data } = await client.post(`/schedulers/${schedulerId}/contacts/upload`, {
           contacts: chunk,
           phone_column: phoneColumn,
           date_columns: dateColumns,
@@ -538,7 +538,7 @@ function ContactsTab({ schedulerId, onRefresh }) {
 
   const handleDeleteContact = async (contactId) => {
     try {
-      await client.delete(`/api/schedulers/${schedulerId}/contacts/${contactId}`);
+      await client.delete(`/schedulers/${schedulerId}/contacts/${contactId}`);
       toast.success('Contact deleted');
       loadContacts();
       onRefresh();
@@ -549,7 +549,7 @@ function ContactsTab({ schedulerId, onRefresh }) {
 
   const handleAddManual = async () => {
     try {
-      await client.post(`/api/schedulers/${schedulerId}/contacts`, manualForm);
+      await client.post(`/schedulers/${schedulerId}/contacts`, manualForm);
       toast.success('Contact added');
       setShowAddManual(false);
       setManualForm({});
@@ -563,7 +563,7 @@ function ContactsTab({ schedulerId, onRefresh }) {
   const handleUpdateContact = async () => {
     try {
       const { id, ...rest } = editContact;
-      await client.put(`/api/schedulers/${schedulerId}/contacts/${id}`, rest);
+      await client.put(`/schedulers/${schedulerId}/contacts/${id}`, rest);
       toast.success('Contact updated');
       setEditContact(null);
       loadContacts();
@@ -775,7 +775,7 @@ function UpcomingTab({ schedulerId }) {
 
   useEffect(() => {
     setLoading(true);
-    client.get(`/api/schedulers/${schedulerId}/analytics/upcoming`, { params: { days } })
+    client.get(`/schedulers/${schedulerId}/analytics/upcoming`, { params: { days } })
       .then(({ data }) => setUpcoming(data.upcoming))
       .catch(() => toast.error('Failed to load upcoming'))
       .finally(() => setLoading(false));
@@ -824,7 +824,7 @@ function AnalyticsTab({ schedulerId }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    client.get(`/api/schedulers/${schedulerId}/analytics`)
+    client.get(`/schedulers/${schedulerId}/analytics`)
       .then(({ data }) => setAnalytics(data))
       .catch(() => toast.error('Failed to load analytics'))
       .finally(() => setLoading(false));
@@ -832,7 +832,7 @@ function AnalyticsTab({ schedulerId }) {
 
   const handleExport = async () => {
     try {
-      const { data } = await client.get(`/api/schedulers/${schedulerId}/analytics/export`, { responseType: 'blob' });
+      const { data } = await client.get(`/schedulers/${schedulerId}/analytics/export`, { responseType: 'blob' });
       const url = URL.createObjectURL(new Blob([data]));
       const a = document.createElement('a');
       a.href = url;
@@ -924,7 +924,7 @@ function LogsTab({ schedulerId, rules }) {
   const [filterRule, setFilterRule] = useState('');
 
   useEffect(() => {
-    client.get(`/api/schedulers/${schedulerId}/logs`, { params: { page, limit: 50, status: filterStatus, rule_id: filterRule } })
+    client.get(`/schedulers/${schedulerId}/logs`, { params: { page, limit: 50, status: filterStatus, rule_id: filterRule } })
       .then(({ data }) => { setLogs(data.logs); setTotal(data.total); })
       .catch(() => toast.error('Failed to load logs'));
   }, [schedulerId, page, filterStatus, filterRule]);
