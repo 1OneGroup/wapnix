@@ -214,3 +214,57 @@ CREATE INDEX IF NOT EXISTS idx_campaign_steps_campaign ON campaign_steps(campaig
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON campaign_contacts(campaign_id, status);
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_due ON campaign_contacts(status, current_step);
 CREATE INDEX IF NOT EXISTS idx_campaign_step_logs ON campaign_step_logs(campaign_id, step_id);
+
+-- Scheduler: date-triggered recurring messages (birthdays, anniversaries)
+CREATE TABLE IF NOT EXISTS schedulers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  send_time TEXT NOT NULL DEFAULT '00:00',
+  timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+  catch_up_past_dates INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft',
+  last_catchup_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_schedulers_user ON schedulers(user_id, status);
+
+CREATE TABLE IF NOT EXISTS scheduler_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduler_id INTEGER NOT NULL REFERENCES schedulers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  date_column TEXT NOT NULL,
+  template_id INTEGER NOT NULL REFERENCES templates(id),
+  media_path TEXT,
+  media_type TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_scheduler_rules_scheduler ON scheduler_rules(scheduler_id);
+
+CREATE TABLE IF NOT EXISTS scheduler_contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduler_id INTEGER NOT NULL REFERENCES schedulers(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL,
+  contact_data TEXT NOT NULL DEFAULT '{}',
+  date_cache TEXT NOT NULL DEFAULT '{}',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(scheduler_id, phone)
+);
+CREATE INDEX IF NOT EXISTS idx_scheduler_contacts_scheduler ON scheduler_contacts(scheduler_id);
+
+CREATE TABLE IF NOT EXISTS scheduler_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduler_id INTEGER NOT NULL REFERENCES schedulers(id) ON DELETE CASCADE,
+  rule_id INTEGER NOT NULL REFERENCES scheduler_rules(id) ON DELETE CASCADE,
+  contact_id INTEGER NOT NULL REFERENCES scheduler_contacts(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'sent',
+  error_message TEXT,
+  year INTEGER NOT NULL,
+  sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(rule_id, contact_id, year)
+);
+CREATE INDEX IF NOT EXISTS idx_scheduler_logs_scheduler ON scheduler_logs(scheduler_id, year);
+CREATE INDEX IF NOT EXISTS idx_scheduler_logs_rule ON scheduler_logs(rule_id, year);

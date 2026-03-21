@@ -184,4 +184,55 @@ if (superadminCount === 0) {
   db.prepare("UPDATE users SET is_approved = 1, is_superadmin = 1 WHERE email = 'avinashsingh36948@gmail.com' AND is_superadmin = 0").run();
 }
 
+// Migration: scheduler tables (for existing DBs that already ran schema.sql before these were added)
+db.exec(`CREATE TABLE IF NOT EXISTS schedulers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  send_time TEXT NOT NULL DEFAULT '00:00',
+  timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+  catch_up_past_dates INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft',
+  last_catchup_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS scheduler_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduler_id INTEGER NOT NULL REFERENCES schedulers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  date_column TEXT NOT NULL,
+  template_id INTEGER NOT NULL REFERENCES templates(id),
+  media_path TEXT,
+  media_type TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS scheduler_contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduler_id INTEGER NOT NULL REFERENCES schedulers(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL,
+  contact_data TEXT NOT NULL DEFAULT '{}',
+  date_cache TEXT NOT NULL DEFAULT '{}',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(scheduler_id, phone)
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS scheduler_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduler_id INTEGER NOT NULL REFERENCES schedulers(id) ON DELETE CASCADE,
+  rule_id INTEGER NOT NULL REFERENCES scheduler_rules(id) ON DELETE CASCADE,
+  contact_id INTEGER NOT NULL REFERENCES scheduler_contacts(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'sent',
+  error_message TEXT,
+  year INTEGER NOT NULL,
+  sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(rule_id, contact_id, year)
+)`);
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_schedulers_user ON schedulers(user_id, status)'); } catch {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_scheduler_rules_scheduler ON scheduler_rules(scheduler_id)'); } catch {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_scheduler_contacts_scheduler ON scheduler_contacts(scheduler_id)'); } catch {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_scheduler_logs_scheduler ON scheduler_logs(scheduler_id, year)'); } catch {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_scheduler_logs_rule ON scheduler_logs(rule_id, year)'); } catch {}
+
 export default db;
