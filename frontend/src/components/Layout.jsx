@@ -10,6 +10,7 @@ import {
   Users,
   Send,
   Bot,
+  CalendarClock,
   Key,
   LogOut,
   Shield,
@@ -32,6 +33,7 @@ const navItems = [
   { to: '/website-data', label: 'Contacts', icon: Users, key: 'website' },
   { to: '/send', label: 'Send Message', icon: Send, key: 'send' },
   { to: '/chatbot', label: 'Chatbot & Campaign', icon: Bot, key: 'chatbot' },
+  { to: '/scheduler', label: 'Scheduler', icon: CalendarClock, key: 'scheduler' },
   { to: '/api', label: 'API Access', icon: Key, key: 'api' },
 ];
 

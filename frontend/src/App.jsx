@@ -9,6 +9,7 @@ import Templates from './pages/Templates.jsx';
 import Contacts from './pages/Contacts.jsx';
 import SendMessage from './pages/SendMessage.jsx';
 import ChatbotBuilder from './pages/ChatbotBuilder.jsx';
+import SchedulerPage from './pages/SchedulerPage.jsx';
 import Terms from './pages/Terms.jsx';
 import SuperAdmin from './pages/SuperAdmin.jsx';
 import ApiPage from './pages/ApiPage.jsx';
@@ -65,6 +66,7 @@ function AppRoutes() {
         {(isSuperAdmin || pages.includes('contacts')) && <Route path="/contacts" element={<Contacts />} />}
         {(isSuperAdmin || pages.includes('send')) && <Route path="/send" element={<SendMessage />} />}
         {(isSuperAdmin || pages.includes('chatbot')) && <Route path="/chatbot" element={<ChatbotBuilder />} />}
+        {(isSuperAdmin || pages.includes('scheduler')) && <Route path="/scheduler" element={<SchedulerPage />} />}
         {(isSuperAdmin || pages.includes('api')) && <Route path="/api" element={<ApiPage />} />}
         <Route path="/website-data" element={<WebsiteData />} />
 
