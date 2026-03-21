@@ -25,6 +25,7 @@ import externalApiRoutes from './routes/externalApi.js';
 import externalApiV1Routes from './routes/v1/index.js';
 import websiteRoutes from './routes/website.js';
 import campaignRoutes from './routes/campaigns.js';
+import schedulerRoutes from './routes/schedulers.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -63,6 +64,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Scheduler routes
+app.use('/api/schedulers', authenticate, schedulerRoutes);
 
 // Campaign routes - webhook enrollment is public, rest needs auth
 app.use('/api/campaigns', (req, res, next) => {
