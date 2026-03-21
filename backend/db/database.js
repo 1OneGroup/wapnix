@@ -229,6 +229,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS scheduler_logs (
   sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(rule_id, contact_id, year)
 )`);
+// Add rule_type and flow_id to scheduler_rules
+addColumnIfMissing('scheduler_rules', 'rule_type', "TEXT NOT NULL DEFAULT 'message'");
+addColumnIfMissing('scheduler_rules', 'flow_id', 'INTEGER');
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_schedulers_user ON schedulers(user_id, status)'); } catch {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_scheduler_rules_scheduler ON scheduler_rules(scheduler_id)'); } catch {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_scheduler_contacts_scheduler ON scheduler_contacts(scheduler_id)'); } catch {}

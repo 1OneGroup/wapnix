@@ -236,7 +236,9 @@ CREATE TABLE IF NOT EXISTS scheduler_rules (
   scheduler_id INTEGER NOT NULL REFERENCES schedulers(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   date_column TEXT NOT NULL,
-  template_id INTEGER NOT NULL REFERENCES templates(id),
+  rule_type TEXT NOT NULL DEFAULT 'message',
+  template_id INTEGER REFERENCES templates(id),
+  flow_id INTEGER REFERENCES chatbot_flows(id),
   media_path TEXT,
   media_type TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP

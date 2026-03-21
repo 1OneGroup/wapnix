@@ -36,9 +36,10 @@ router.get('/:id', (req, res) => {
   if (!scheduler) return res.status(404).json({ error: 'Scheduler not found' });
 
   const rules = db.prepare(`
-    SELECT sr.*, t.name as template_name, t.body as template_body
+    SELECT sr.*, t.name as template_name, t.body as template_body, cf.name as flow_name
     FROM scheduler_rules sr
     LEFT JOIN templates t ON sr.template_id = t.id
+    LEFT JOIN chatbot_flows cf ON sr.flow_id = cf.id
     WHERE sr.scheduler_id = ?
     ORDER BY sr.created_at ASC
   `).all(scheduler.id);
@@ -128,12 +129,21 @@ router.post('/:id/rules', upload.single('media'), (req, res) => {
   const scheduler = db.prepare('SELECT * FROM schedulers WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!scheduler) return res.status(404).json({ error: 'Scheduler not found' });
 
-  const { name, date_column, template_id } = req.body;
-  if (!name || !date_column || !template_id) return res.status(400).json({ error: 'name, date_column, and template_id are required' });
+  const { name, date_column, template_id, rule_type, flow_id } = req.body;
+  const type = rule_type || 'message';
+  if (!name || !date_column) return res.status(400).json({ error: 'name and date_column are required' });
+  if (type === 'message' && !template_id) return res.status(400).json({ error: 'template_id is required for message rules' });
+  if (type === 'chatbot' && !flow_id) return res.status(400).json({ error: 'flow_id is required for chatbot rules' });
 
-  // Verify template exists and belongs to user
-  const template = db.prepare('SELECT id FROM templates WHERE id = ? AND user_id = ?').get(parseInt(template_id), req.user.id);
-  if (!template) return res.status(404).json({ error: 'Template not found' });
+  // Verify template/flow exists
+  if (type === 'message' && template_id) {
+    const template = db.prepare('SELECT id FROM templates WHERE id = ? AND user_id = ?').get(parseInt(template_id), req.user.id);
+    if (!template) return res.status(404).json({ error: 'Template not found' });
+  }
+  if (type === 'chatbot' && flow_id) {
+    const flow = db.prepare('SELECT id FROM chatbot_flows WHERE id = ? AND user_id = ?').get(parseInt(flow_id), req.user.id);
+    if (!flow) return res.status(404).json({ error: 'Chatbot flow not found' });
+  }
 
   let media_path = null;
   let media_type = null;
@@ -144,8 +154,8 @@ router.post('/:id/rules', upload.single('media'), (req, res) => {
   }
 
   const result = db.prepare(
-    'INSERT INTO scheduler_rules (scheduler_id, name, date_column, template_id, media_path, media_type) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(scheduler.id, name, date_column, parseInt(template_id), media_path, media_type);
+    'INSERT INTO scheduler_rules (scheduler_id, name, date_column, rule_type, template_id, flow_id, media_path, media_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(scheduler.id, name, date_column, type, template_id ? parseInt(template_id) : null, flow_id ? parseInt(flow_id) : null, media_path, media_type);
 
   res.json({ id: result.lastInsertRowid, message: 'Rule added' });
 });
@@ -158,7 +168,7 @@ router.put('/:id/rules/:ruleId', upload.single('media'), (req, res) => {
   const rule = db.prepare('SELECT * FROM scheduler_rules WHERE id = ? AND scheduler_id = ?').get(req.params.ruleId, scheduler.id);
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
 
-  const { name, date_column, template_id } = req.body;
+  const { name, date_column, template_id, rule_type, flow_id } = req.body;
 
   let media_path = rule.media_path;
   let media_type = rule.media_type;
@@ -169,8 +179,15 @@ router.put('/:id/rules/:ruleId', upload.single('media'), (req, res) => {
   }
 
   db.prepare(
-    'UPDATE scheduler_rules SET name = ?, date_column = ?, template_id = ?, media_path = ?, media_type = ? WHERE id = ?'
-  ).run(name || rule.name, date_column || rule.date_column, template_id ? parseInt(template_id) : rule.template_id, media_path, media_type, rule.id);
+    'UPDATE scheduler_rules SET name = ?, date_column = ?, rule_type = ?, template_id = ?, flow_id = ?, media_path = ?, media_type = ? WHERE id = ?'
+  ).run(
+    name || rule.name,
+    date_column || rule.date_column,
+    rule_type || rule.rule_type || 'message',
+    template_id ? parseInt(template_id) : (rule_type === 'chatbot' ? null : rule.template_id),
+    flow_id ? parseInt(flow_id) : (rule_type === 'message' ? null : rule.flow_id),
+    media_path, media_type, rule.id
+  );
 
   res.json({ message: 'Rule updated' });
 });

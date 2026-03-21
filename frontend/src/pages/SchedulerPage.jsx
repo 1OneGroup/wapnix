@@ -314,24 +314,24 @@ function RulesTab({ schedulerId, rules, csvColumns, onRefresh }) {
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [templates, setTemplates] = useState([]);
-  const [form, setForm] = useState({ name: '', date_column: '', template_id: '' });
+  const [flows, setFlows] = useState([]);
+  const [form, setForm] = useState({ name: '', date_column: '', rule_type: 'message', template_id: '', flow_id: '' });
 
   useEffect(() => {
     api.get('/templates').then(({ data }) => setTemplates(data.templates || [])).catch(() => {});
+    api.get('/chatbot/flows').then(({ data }) => setFlows(data.flows || [])).catch(() => {});
   }, []);
 
+  const resetForm = () => { setShowAdd(false); setEditingId(null); setForm({ name: '', date_column: '', rule_type: 'message', template_id: '', flow_id: '' }); };
+
   const handleSave = async (isEdit = false) => {
-    if (!form.name || !form.date_column || !form.template_id) return toast.error('All fields are required');
+    if (!form.name || !form.date_column) return toast.error('Name and date column are required');
+    if (form.rule_type === 'message' && !form.template_id) return toast.error('Select a template');
+    if (form.rule_type === 'chatbot' && !form.flow_id) return toast.error('Select a chatbot flow');
     try {
-      if (isEdit) {
-        await api.put(`/schedulers/${schedulerId}/rules/${editingId}`, form);
-        toast.success('Rule updated');
-      } else {
-        await api.post(`/schedulers/${schedulerId}/rules`, form);
-        toast.success('Rule added');
-      }
-      setShowAdd(false); setEditingId(null); setForm({ name: '', date_column: '', template_id: '' });
-      onRefresh();
+      if (isEdit) { await api.put(`/schedulers/${schedulerId}/rules/${editingId}`, form); toast.success('Rule updated'); }
+      else { await api.post(`/schedulers/${schedulerId}/rules`, form); toast.success('Rule added'); }
+      resetForm(); onRefresh();
     } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
   };
 
@@ -343,7 +343,7 @@ function RulesTab({ schedulerId, rules, csvColumns, onRefresh }) {
 
   const startEdit = (rule) => {
     setEditingId(rule.id);
-    setForm({ name: rule.name, date_column: rule.date_column, template_id: String(rule.template_id) });
+    setForm({ name: rule.name, date_column: rule.date_column, rule_type: rule.rule_type || 'message', template_id: rule.template_id ? String(rule.template_id) : '', flow_id: rule.flow_id ? String(rule.flow_id) : '' });
     setShowAdd(true);
   };
 
@@ -376,25 +376,48 @@ function RulesTab({ schedulerId, rules, csvColumns, onRefresh }) {
             {csvColumns.length === 0 && <p className="text-xs text-yellow-600 mt-1">Upload contacts first to auto-detect columns</p>}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Template</label>
-            <select value={form.template_id} onChange={e => setForm(f => ({ ...f, template_id: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
-              <option value="">Select template...</option>
-              {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
+            <div className="flex gap-2">
+              <button onClick={() => setForm(f => ({ ...f, rule_type: 'message', flow_id: '' }))}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition ${form.rule_type === 'message' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:border-indigo-400'}`}>
+                Message
+              </button>
+              <button onClick={() => setForm(f => ({ ...f, rule_type: 'chatbot', template_id: '' }))}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition ${form.rule_type === 'chatbot' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:border-indigo-400'}`}>
+                Chatbot
+              </button>
+            </div>
           </div>
+          {form.rule_type === 'message' ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Template</label>
+              <select value={form.template_id} onChange={e => setForm(f => ({ ...f, template_id: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <option value="">Select template...</option>
+                {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Chatbot Flow</label>
+              <select value={form.flow_id} onChange={e => setForm(f => ({ ...f, flow_id: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <option value="">Select chatbot flow...</option>
+                {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+          )}
           <div className="flex gap-2">
             <button onClick={() => handleSave(!!editingId)} className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm hover:bg-[var(--color-primary-dark)] transition">
               {editingId ? 'Update' : 'Add'} Rule
             </button>
-            <button onClick={() => { setShowAdd(false); setEditingId(null); setForm({ name: '', date_column: '', template_id: '' }); }}
-              className="px-4 py-2 text-gray-600 rounded-lg text-sm hover:bg-gray-100 transition">Cancel</button>
+            <button onClick={resetForm} className="px-4 py-2 text-gray-600 rounded-lg text-sm hover:bg-gray-100 transition">Cancel</button>
           </div>
         </div>
       )}
 
       {rules.length === 0 && !showAdd ? (
-        <p className="text-gray-400 text-sm">No rules yet. Add a rule to map a date column to a message template.</p>
+        <p className="text-gray-400 text-sm">No rules yet. Add a rule to map a date column to a message template or chatbot flow.</p>
       ) : (
         <div className="space-y-3">
           {rules.map(rule => (
@@ -402,8 +425,12 @@ function RulesTab({ schedulerId, rules, csvColumns, onRefresh }) {
               <div className="flex-1">
                 <h4 className="font-medium text-gray-800">{rule.name}</h4>
                 <p className="text-sm text-gray-500">
-                  Column: <span className="text-indigo-600 font-medium">{rule.date_column}</span> → Template: <span className="text-indigo-600 font-medium">{rule.template_name || 'Unknown'}</span>
-                  {rule.media_type && <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">{rule.media_type}</span>}
+                  Column: <span className="text-indigo-600 font-medium">{rule.date_column}</span> →{' '}
+                  {(rule.rule_type || 'message') === 'chatbot'
+                    ? <><span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full mr-1">Chatbot</span><span className="text-indigo-600 font-medium">{rule.flow_name || 'Unknown'}</span></>
+                    : <><span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full mr-1">Message</span><span className="text-indigo-600 font-medium">{rule.template_name || 'Unknown'}</span></>
+                  }
+                  {rule.media_type && <span className="ml-2 text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">{rule.media_type}</span>}
                 </p>
               </div>
               <button onClick={() => startEdit(rule)} className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition"><Edit2 size={16} /></button>
