@@ -22,6 +22,8 @@ router.use('/', accountRoutes);
 router.use('/contacts', contactRoutes);
 router.use('/templates', templateRoutes);
 router.use('/messages', messageRoutes);
+// Shortcut: /api/v1/send and /api/v1/send-bulk (alias for /api/v1/messages/send)
+router.use('/', messageRoutes);
 router.use('/chatbot', chatbotRoutes);
 router.use('/campaigns', campaignRoutes);
 router.use('/leads', leadRoutes);
