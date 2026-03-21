@@ -19,6 +19,7 @@ const PAGE_LABELS = {
   website: 'Contacts',
   send: 'Send Message',
   chatbot: 'Chatbot Builder',
+  scheduler: 'Scheduler',
   api: 'API Access',
 };
 

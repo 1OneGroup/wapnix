@@ -18,7 +18,7 @@ function requireSuperAdmin(req, res, next) {
 router.use(requireSuperAdmin);
 
 // All available pages
-const ALL_PAGES = ['dashboard', 'device', 'templates', 'website', 'send', 'chatbot', 'api'];
+const ALL_PAGES = ['dashboard', 'device', 'templates', 'website', 'send', 'chatbot', 'scheduler', 'api'];
 
 // List all users
 router.get('/users', (req, res) => {
