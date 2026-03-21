@@ -3,6 +3,8 @@ import { Plus, Trash2, Play, X, GripVertical, MessageSquare, ArrowRight, Chevron
 import toast from '../utils/notify.js';
 import api from '../api/client.js';
 import CampaignBuilder from './CampaignBuilder.jsx';
+import WarmUpSelector, { getWarmupLimit, WARMUP_LIMITS } from '../components/WarmUpSelector.jsx';
+import WarmUpLimitPopup from '../components/WarmUpLimitPopup.jsx';
 
 // ── Pre-defined Chatbot Templates ──
 const chatbotTemplates = [
@@ -602,6 +604,10 @@ function BulkMessages({ onOpenCampaign }) {
   const [bulkUploading, setBulkUploading] = useState(false);
   const [savedCampaigns, setSavedCampaigns] = useState([]);
   const [showCampaignPicker, setShowCampaignPicker] = useState(false);
+  const [warmupDay, setWarmupDay] = useState(() => { try { return parseInt(localStorage.getItem('bulk_warmup_day') || '1'); } catch { return 1; } });
+  const [warmupSent, setWarmupSent] = useState(() => { try { return parseInt(localStorage.getItem('bulk_warmup_sent') || '0'); } catch { return 0; } });
+  const [showLimitPopup, setShowLimitPopup] = useState(false);
+  const [limitPopupData, setLimitPopupData] = useState(null);
   const fileRef = useRef(null);
   const msgRef = useRef(null);
   const bulkImgRef = useRef(null);
@@ -944,7 +950,21 @@ function BulkMessages({ onOpenCampaign }) {
         return obj;
       });
 
-      const payload = { contacts: minimalContacts };
+      // Warm-up: slice contacts to remaining day limit
+      const warmupLimit = getWarmupLimit(warmupDay);
+      let contactsToSend = minimalContacts;
+      if (warmupLimit !== Infinity) {
+        const remaining = Math.max(0, warmupLimit - warmupSent);
+        if (remaining === 0) {
+          setLimitPopupData({ day: warmupDay, limit: warmupLimit, sent: warmupSent, remaining: minimalContacts.length });
+          setShowLimitPopup(true);
+          updateC({ sending: false });
+          return;
+        }
+        contactsToSend = minimalContacts.slice(0, remaining);
+      }
+
+      const payload = { contacts: contactsToSend };
       if (c.useFlow && c.activeFlow) { payload.use_flow = true; payload.flow_id = c.activeFlow.id; }
       else { payload.message = c.message; }
       if (bulkImages.length > 0) {
@@ -954,8 +974,21 @@ function BulkMessages({ onOpenCampaign }) {
 
       const res = await api.post('/chatbot/bulk-send', payload);
       updateC({ batchId: res.data.batch_id });
+
+      // Update warm-up sent count
+      const newSent = warmupSent + contactsToSend.length;
+      setWarmupSent(newSent);
+      localStorage.setItem('bulk_warmup_sent', String(newSent));
+
       toast.success(`${res.data.queued} queued, ${res.data.failed} failed, ${res.data.skipped} skipped`);
       startPolling(res.data.batch_id, c.id);
+
+      // Show limit popup if more contacts remain
+      if (contactsToSend.length < minimalContacts.length) {
+        const leftOver = minimalContacts.length - contactsToSend.length;
+        setLimitPopupData({ day: warmupDay, limit: warmupLimit, sent: newSent, remaining: leftOver });
+        setShowLimitPopup(true);
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Send failed');
       updateC({ sending: false });
@@ -1504,6 +1537,14 @@ function BulkMessages({ onOpenCampaign }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Warm-up Plan Selector */}
+      {c && c.contacts.length > 0 && (
+        <WarmUpSelector
+          storageKey="bulk_warmup"
+          onDayChange={({ day, sent }) => { setWarmupDay(day); setWarmupSent(sent); }}
+        />
       )}
 
       {/* Action Bar + Batch Status */}
@@ -2222,6 +2263,26 @@ function QuickSend() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Warm-up Limit Reached Popup */}
+      {showLimitPopup && limitPopupData && (
+        <WarmUpLimitPopup
+          currentDay={limitPopupData.day}
+          limit={limitPopupData.limit}
+          sent={limitPopupData.sent}
+          remaining={limitPopupData.remaining}
+          onStop={() => { setShowLimitPopup(false); setLimitPopupData(null); }}
+          onSwitch={(nextDay) => {
+            setWarmupDay(nextDay);
+            setWarmupSent(0);
+            localStorage.setItem('bulk_warmup_day', String(nextDay));
+            localStorage.setItem('bulk_warmup_sent', '0');
+            setShowLimitPopup(false);
+            setLimitPopupData(null);
+            toast.success(`Switched to Day ${nextDay <= 7 ? nextDay : '8+'}! Limit: ${nextDay <= 7 ? WARMUP_LIMITS[nextDay - 1] : 'Unlimited'} messages`);
+          }}
+        />
       )}
     </div>
   );

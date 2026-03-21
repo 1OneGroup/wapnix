@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../api/client.js';
 import toast from '../utils/notify.js';
+import WarmUpSelector, { getWarmupLimit, WARMUP_LIMITS } from '../components/WarmUpSelector.jsx';
+import WarmUpLimitPopup from '../components/WarmUpLimitPopup.jsx';
 import { useSettings } from '../context/SettingsContext.jsx';
 import { Send, Users, Upload, FileSpreadsheet, Trash2, RefreshCw, CheckCircle, XCircle, Clock, GripVertical, Play, X, Pause, ImagePlus } from 'lucide-react';
 
@@ -258,6 +260,10 @@ function BulkCSVMessage({ templates }) {
   const fileRef = useRef(null);
   const pollRef = useRef(null);
   const [paused, setPaused] = useState(false);
+  const [warmupDay, setWarmupDay] = useState(() => { try { return parseInt(localStorage.getItem('send_warmup_day') || '1'); } catch { return 1; } });
+  const [warmupSent, setWarmupSent] = useState(() => { try { return parseInt(localStorage.getItem('send_warmup_sent') || '0'); } catch { return 0; } });
+  const [showLimitPopup, setShowLimitPopup] = useState(false);
+  const [limitPopupData, setLimitPopupData] = useState(null);
 
   useEffect(() => {
     if (contacts.length > 0) {
@@ -413,10 +419,35 @@ function BulkCSVMessage({ templates }) {
         if (c.fullname && !min.name) min.name = c.fullname;
         return min;
       });
-      const res = await api.post('/messages/send-bulk', { contacts: minContacts, message });
+      // Warm-up: slice contacts to remaining day limit
+      const warmupLimit = getWarmupLimit(warmupDay);
+      let contactsToSend = minContacts;
+      if (warmupLimit !== Infinity) {
+        const remaining = Math.max(0, warmupLimit - warmupSent);
+        if (remaining === 0) {
+          setLimitPopupData({ day: warmupDay, limit: warmupLimit, sent: warmupSent, remaining: minContacts.length });
+          setShowLimitPopup(true);
+          setSending(false);
+          return;
+        }
+        contactsToSend = minContacts.slice(0, remaining);
+      }
+
+      const res = await api.post('/messages/send-bulk', { contacts: contactsToSend, message });
       setBatchId(res.data.batch_id);
+
+      const newSent = warmupSent + contactsToSend.length;
+      setWarmupSent(newSent);
+      localStorage.setItem('send_warmup_sent', String(newSent));
+
       toast.success(`${res.data.queued} messages queued (via bridge)!`);
       startPolling(res.data.batch_id);
+
+      if (contactsToSend.length < minContacts.length) {
+        const leftOver = minContacts.length - contactsToSend.length;
+        setLimitPopupData({ day: warmupDay, limit: warmupLimit, sent: newSent, remaining: leftOver });
+        setShowLimitPopup(true);
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Send failed');
       setSending(false);
@@ -777,6 +808,14 @@ function BulkCSVMessage({ templates }) {
             );
           })()}
 
+          {/* Warm-up Plan Selector */}
+          {contacts.length > 0 && (
+            <WarmUpSelector
+              storageKey="send_warmup"
+              onDayChange={({ day, sent }) => { setWarmupDay(day); setWarmupSent(sent); }}
+            />
+          )}
+
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t">
             <div className="flex items-center gap-2 md:gap-3 flex-wrap">
               <p className="text-sm text-gray-500">{selected.size} of {contacts.length} selected</p>
@@ -852,6 +891,26 @@ function BulkCSVMessage({ templates }) {
             <p className="text-[10px] sm:text-xs text-gray-400">Queued</p>
           </div>
         </div>
+      )}
+
+      {/* Warm-up Limit Reached Popup */}
+      {showLimitPopup && limitPopupData && (
+        <WarmUpLimitPopup
+          currentDay={limitPopupData.day}
+          limit={limitPopupData.limit}
+          sent={limitPopupData.sent}
+          remaining={limitPopupData.remaining}
+          onStop={() => { setShowLimitPopup(false); setLimitPopupData(null); }}
+          onSwitch={(nextDay) => {
+            setWarmupDay(nextDay);
+            setWarmupSent(0);
+            localStorage.setItem('send_warmup_day', String(nextDay));
+            localStorage.setItem('send_warmup_sent', '0');
+            setShowLimitPopup(false);
+            setLimitPopupData(null);
+            toast.success(`Switched to Day ${nextDay <= 7 ? nextDay : '8+'}! Limit: ${nextDay <= 7 ? WARMUP_LIMITS[nextDay - 1] : 'Unlimited'} messages`);
+          }}
+        />
       )}
     </div>
   );
