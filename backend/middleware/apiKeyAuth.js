@@ -14,16 +14,27 @@ export function authenticateApiKey(req, res, next) {
     return res.status(401).json({ error: 'API key required. Pass via X-API-Key header or api_key query param.' });
   }
 
-  const user = db.prepare(
-    'SELECT u.*, p.name as plan_name, p.daily_limit, p.monthly_limit, p.max_contacts, p.max_templates, p.rate_per_minute, p.rate_per_hour FROM users u JOIN plans p ON u.plan_id = p.id WHERE u.api_key = ? AND u.is_active = 1'
-  ).get(apiKey);
+  // First check if key exists (without is_active filter for better error messages)
+  const keyCheck = db.prepare('SELECT id, is_active, is_approved, is_superadmin FROM users WHERE api_key = ?').get(apiKey);
 
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid API key' });
+  if (!keyCheck) {
+    return res.status(401).json({ error: 'Invalid API key. Generate a new key from API Access page.' });
   }
 
-  if (!user.is_approved && !user.is_superadmin) {
-    return res.status(403).json({ error: 'Account not approved' });
+  if (!keyCheck.is_active) {
+    return res.status(403).json({ error: 'Account is deactivated. Contact admin.' });
+  }
+
+  if (!keyCheck.is_approved && !keyCheck.is_superadmin) {
+    return res.status(403).json({ error: 'Account not approved. Contact admin.' });
+  }
+
+  const user = db.prepare(
+    'SELECT u.*, p.name as plan_name, p.daily_limit, p.monthly_limit, p.max_contacts, p.max_templates, p.rate_per_minute, p.rate_per_hour FROM users u JOIN plans p ON u.plan_id = p.id WHERE u.id = ?'
+  ).get(keyCheck.id);
+
+  if (!user) {
+    return res.status(500).json({ error: 'User plan configuration error. Contact admin.' });
   }
 
   req.user = user;
