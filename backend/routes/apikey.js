@@ -28,6 +28,9 @@ router.get('/', async (req, res) => {
 
 // Generate new access token
 router.post('/generate', (req, res) => {
+  const plan = db.prepare('SELECT p.name FROM plans p JOIN users u ON u.plan_id = p.id WHERE u.id = ?').get(req.user.id);
+  if (plan?.name === 'free') return res.status(403).json({ error: 'API access is not available on the Free plan. Please upgrade to Starter or Pro.' });
+
   const { token_name } = req.body;
   if (!token_name || !token_name.trim()) return res.status(400).json({ error: 'Token name is required' });
   const key = 'wapnix_' + crypto.randomBytes(32).toString('hex');
