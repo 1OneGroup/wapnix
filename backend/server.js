@@ -358,6 +358,164 @@ async function runCampaignScheduler() {
   }
 }
 
+// Date Scheduler - checks every 5 minutes for date-triggered messages (birthdays, anniversaries)
+async function runDateScheduler() {
+  try {
+    const activeSchedulers = db.prepare("SELECT * FROM schedulers WHERE status = 'active'").all();
+
+    for (const scheduler of activeSchedulers) {
+      // Convert current UTC time to scheduler's timezone
+      const now = new Date();
+      const tzOptions = { timeZone: scheduler.timezone, hour: '2-digit', minute: '2-digit', hour12: false };
+      const currentTimeInTz = new Intl.DateTimeFormat('en-GB', tzOptions).format(now);
+      const currentHH = parseInt(currentTimeInTz.split(':')[0]);
+      const currentMM = parseInt(currentTimeInTz.split(':')[1]);
+      const sendHH = parseInt(scheduler.send_time.split(':')[0]);
+      const sendMM = parseInt(scheduler.send_time.split(':')[1]);
+
+      // Check if within 5-minute window
+      const currentMinutes = currentHH * 60 + currentMM;
+      const sendMinutes = sendHH * 60 + sendMM;
+      if (currentMinutes < sendMinutes || currentMinutes >= sendMinutes + 5) continue;
+
+      // Get today's MM-DD in scheduler's timezone
+      const dateOptions = { timeZone: scheduler.timezone, month: '2-digit', day: '2-digit' };
+      const dateParts = new Intl.DateTimeFormat('en-US', dateOptions).formatToParts(now);
+      const todayMonth = dateParts.find(p => p.type === 'month').value;
+      const todayDay = dateParts.find(p => p.type === 'day').value;
+      const todayMMDD = `${todayMonth}-${todayDay}`;
+
+      const yearOptions = { timeZone: scheduler.timezone, year: 'numeric' };
+      const currentYear = parseInt(new Intl.DateTimeFormat('en-US', yearOptions).format(now));
+
+      // Check WhatsApp session
+      const session = sessionManager.getSession(scheduler.user_id);
+      if (!session || !session.isConnected) {
+        console.log(`[scheduler] Scheduler ${scheduler.id}: WhatsApp not connected for user ${scheduler.user_id}, skipping`);
+        continue;
+      }
+
+      const rules = db.prepare('SELECT * FROM scheduler_rules WHERE scheduler_id = ?').all(scheduler.id);
+      const { renderTemplate } = await import('./services/messageService.js');
+      const { sendSingle } = await import('./services/messageService.js');
+
+      // Catch-up logic
+      let needsCatchup = false;
+      if (scheduler.catch_up_past_dates) {
+        if (!scheduler.last_catchup_at) {
+          needsCatchup = true;
+        } else {
+          const newContacts = db.prepare(
+            'SELECT COUNT(*) as c FROM scheduler_contacts WHERE scheduler_id = ? AND created_at > ?'
+          ).get(scheduler.id, scheduler.last_catchup_at).c;
+          if (newContacts > 0) needsCatchup = true;
+        }
+      }
+
+      if (needsCatchup) {
+        console.log(`[scheduler] Running catch-up for scheduler ${scheduler.id}`);
+        for (const rule of rules) {
+          const template = db.prepare('SELECT * FROM templates WHERE id = ?').get(rule.template_id);
+          if (!template) continue;
+
+          const jan1 = new Date(currentYear, 0, 1);
+          const yesterday = new Date(now);
+          yesterday.setDate(yesterday.getDate() - 1);
+
+          for (let d = new Date(jan1); d <= yesterday; d.setDate(d.getDate() + 1)) {
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            const checkMMDD = `${mm}-${dd}`;
+
+            const matchingContacts = db.prepare(
+              `SELECT * FROM scheduler_contacts WHERE scheduler_id = ? AND json_extract(date_cache, '$."${rule.date_column}"') = ?`
+            ).all(scheduler.id, checkMMDD);
+
+            for (const contact of matchingContacts) {
+              const alreadySent = db.prepare(
+                'SELECT id FROM scheduler_logs WHERE rule_id = ? AND contact_id = ? AND year = ?'
+              ).get(rule.id, contact.id, currentYear);
+              if (alreadySent) continue;
+
+              try {
+                let contactData;
+                try { contactData = JSON.parse(contact.contact_data); } catch { contactData = {}; }
+                const body = renderTemplate(template.body, contactData);
+
+                await sendSingle(scheduler.user_id, {
+                  phone: contact.phone,
+                  message: body,
+                  media: rule.media_path ? [{ url: rule.media_path }] : undefined,
+                  skipUsageIncrement: true,
+                });
+
+                db.prepare(
+                  'INSERT OR IGNORE INTO scheduler_logs (scheduler_id, rule_id, contact_id, phone, status, year) VALUES (?, ?, ?, ?, ?, ?)'
+                ).run(scheduler.id, rule.id, contact.id, contact.phone, 'sent', currentYear);
+                console.log(`[scheduler] Catch-up sent to ${contact.phone} (rule: ${rule.name})`);
+                await new Promise(resolve => setTimeout(resolve, 15000));
+              } catch (err) {
+                db.prepare(
+                  'INSERT OR IGNORE INTO scheduler_logs (scheduler_id, rule_id, contact_id, phone, status, error_message, year) VALUES (?, ?, ?, ?, ?, ?, ?)'
+                ).run(scheduler.id, rule.id, contact.id, contact.phone, 'failed', err.message, currentYear);
+                console.error(`[scheduler] Catch-up failed for ${contact.phone}:`, err.message);
+              }
+            }
+          }
+        }
+        db.prepare('UPDATE schedulers SET last_catchup_at = ? WHERE id = ?').run(now.toISOString(), scheduler.id);
+        console.log(`[scheduler] Catch-up complete for scheduler ${scheduler.id}`);
+      }
+
+      // Normal daily check: send for today's date
+      for (const rule of rules) {
+        const template = db.prepare('SELECT * FROM templates WHERE id = ?').get(rule.template_id);
+        if (!template) {
+          console.log(`[scheduler] Rule ${rule.id}: template ${rule.template_id} not found, skipping`);
+          continue;
+        }
+
+        const matchingContacts = db.prepare(
+          `SELECT * FROM scheduler_contacts WHERE scheduler_id = ? AND json_extract(date_cache, '$."${rule.date_column}"') = ?`
+        ).all(scheduler.id, todayMMDD);
+
+        for (const contact of matchingContacts) {
+          const alreadySent = db.prepare(
+            'SELECT id FROM scheduler_logs WHERE rule_id = ? AND contact_id = ? AND year = ?'
+          ).get(rule.id, contact.id, currentYear);
+          if (alreadySent) continue;
+
+          try {
+            let contactData;
+            try { contactData = JSON.parse(contact.contact_data); } catch { contactData = {}; }
+            const body = renderTemplate(template.body, contactData);
+
+            await sendSingle(scheduler.user_id, {
+              phone: contact.phone,
+              message: body,
+              media: rule.media_path ? [{ url: rule.media_path }] : undefined,
+              skipUsageIncrement: true,
+            });
+
+            db.prepare(
+              'INSERT OR IGNORE INTO scheduler_logs (scheduler_id, rule_id, contact_id, phone, status, year) VALUES (?, ?, ?, ?, ?, ?)'
+            ).run(scheduler.id, rule.id, contact.id, contact.phone, 'sent', currentYear);
+            console.log(`[scheduler] Sent to ${contact.phone} for rule "${rule.name}" (scheduler: ${scheduler.name})`);
+            await new Promise(resolve => setTimeout(resolve, 15000));
+          } catch (err) {
+            db.prepare(
+              'INSERT OR IGNORE INTO scheduler_logs (scheduler_id, rule_id, contact_id, phone, status, error_message, year) VALUES (?, ?, ?, ?, ?, ?, ?)'
+            ).run(scheduler.id, rule.id, contact.id, contact.phone, 'failed', err.message, currentYear);
+            console.error(`[scheduler] Failed to send to ${contact.phone}:`, err.message);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[scheduler] Date scheduler error:', err.message);
+  }
+}
+
 // Start server
 httpServer.listen(config.port, async () => {
   console.log(`WhatsApp Business Plan API running on port ${config.port}`);
@@ -377,4 +535,8 @@ httpServer.listen(config.port, async () => {
   // Start campaign scheduler (check every 5 minutes)
   setInterval(runCampaignScheduler, 5 * 60 * 1000);
   setTimeout(runCampaignScheduler, 15000);
+
+  // Start date scheduler (check every 5 minutes)
+  setInterval(runDateScheduler, 5 * 60 * 1000);
+  setTimeout(runDateScheduler, 20000);
 });
