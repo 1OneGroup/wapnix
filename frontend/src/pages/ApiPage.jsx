@@ -53,17 +53,33 @@ export default function ApiPage() {
     }
   };
 
-  const copyToken = () => {
-    const t = fullToken || token;
-    if (t) {
-      navigator.clipboard.writeText(t);
+  const fallbackCopy = (text) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+  };
+
+  const copyToClipboard = (text) => {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => toast.success('Copied!')).catch(() => { fallbackCopy(text); toast.success('Copied!'); });
+    } else {
+      fallbackCopy(text);
       toast.success('Copied!');
     }
   };
 
+  const copyToken = () => {
+    const t = fullToken || token;
+    if (t) copyToClipboard(t);
+  };
+
   const copyText = (text) => {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied!');
+    copyToClipboard(text);
   };
 
   const localUrl = window.location.origin.replace(':5173', ':4000') + '/api/v1';
