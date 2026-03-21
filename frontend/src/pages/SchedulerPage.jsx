@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CalendarClock, Plus, ArrowLeft, Trash2, Play, Pause, Settings, List, Users, Eye, BarChart3, FileText, Upload, Search, Edit2, X, Download } from 'lucide-react';
-import client from '../api/client.js';
-import toast from 'react-hot-toast';
+import { CalendarClock, Plus, ArrowLeft, Trash2, Play, Pause, Settings, List, Users, Eye, BarChart3, FileText, Upload, Search, Edit2, X, Download, Hash, Clock } from 'lucide-react';
+import api from '../api/client.js';
+import toast from '../utils/notify.js';
 
 const TABS = [
   { id: 'settings', label: 'Settings', icon: Settings },
@@ -19,6 +19,12 @@ const COMMON_TIMEZONES = [
   'Australia/Sydney', 'Pacific/Auckland', 'UTC',
 ];
 
+const statusColors = {
+  draft: 'bg-gray-100 text-gray-600',
+  active: 'bg-green-100 text-green-700',
+  paused: 'bg-yellow-100 text-yellow-700',
+};
+
 export default function SchedulerPage() {
   const [schedulers, setSchedulers] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -27,7 +33,7 @@ export default function SchedulerPage() {
   const [csvColumns, setCsvColumns] = useState([]);
   const [stats, setStats] = useState({});
   const [activeTab, setActiveTab] = useState('settings');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
 
   const [createForm, setCreateForm] = useState({ name: '', description: '', send_time: '00:00', timezone: 'Asia/Kolkata', catch_up_past_dates: false });
@@ -35,17 +41,19 @@ export default function SchedulerPage() {
 
   const loadSchedulers = useCallback(async () => {
     try {
-      const { data } = await client.get('/schedulers');
+      setLoading(true);
+      const { data } = await api.get('/schedulers');
       setSchedulers(data.schedulers);
     } catch (err) {
       toast.error('Failed to load schedulers');
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   const loadSchedulerDetail = useCallback(async (id) => {
     try {
-      setLoading(true);
-      const { data } = await client.get(`/schedulers/${id}`);
+      const { data } = await api.get(`/schedulers/${id}`);
       setScheduler(data.scheduler);
       setRules(data.rules);
       setCsvColumns(data.csvColumns);
@@ -59,8 +67,6 @@ export default function SchedulerPage() {
       });
     } catch (err) {
       toast.error('Failed to load scheduler');
-    } finally {
-      setLoading(false);
     }
   }, []);
 
@@ -70,7 +76,7 @@ export default function SchedulerPage() {
   const handleCreate = async () => {
     if (!createForm.name.trim()) return toast.error('Name is required');
     try {
-      const { data } = await client.post('/schedulers', createForm);
+      const { data } = await api.post('/schedulers', createForm);
       toast.success('Scheduler created');
       setShowCreate(false);
       setCreateForm({ name: '', description: '', send_time: '00:00', timezone: 'Asia/Kolkata', catch_up_past_dates: false });
@@ -83,7 +89,7 @@ export default function SchedulerPage() {
 
   const handleUpdateSettings = async () => {
     try {
-      await client.put(`/schedulers/${selectedId}`, settingsForm);
+      await api.put(`/schedulers/${selectedId}`, settingsForm);
       toast.success('Settings saved');
       loadSchedulerDetail(selectedId);
     } catch (err) {
@@ -93,212 +99,207 @@ export default function SchedulerPage() {
 
   const handleActivate = async () => {
     try {
-      await client.post(`/schedulers/${selectedId}/activate`);
+      await api.post(`/schedulers/${selectedId}/activate`);
       toast.success('Scheduler activated');
       loadSchedulerDetail(selectedId);
       loadSchedulers();
-    } catch (err) {
-      toast.error('Failed to activate');
-    }
+    } catch { toast.error('Failed to activate'); }
   };
 
   const handlePause = async () => {
     try {
-      await client.post(`/schedulers/${selectedId}/pause`);
+      await api.post(`/schedulers/${selectedId}/pause`);
       toast.success('Scheduler paused');
       loadSchedulerDetail(selectedId);
       loadSchedulers();
-    } catch (err) {
-      toast.error('Failed to pause');
-    }
+    } catch { toast.error('Failed to pause'); }
   };
 
   const handleDelete = async () => {
     if (!confirm('Delete this scheduler and all its data?')) return;
     try {
-      await client.delete(`/schedulers/${selectedId}`);
+      await api.delete(`/schedulers/${selectedId}`);
       toast.success('Scheduler deleted');
       setSelectedId(null);
       setScheduler(null);
       loadSchedulers();
-    } catch (err) {
-      toast.error('Failed to delete');
-    }
-  };
-
-  const statusColor = (status) => {
-    if (status === 'active') return 'text-green-400 bg-green-400/10';
-    if (status === 'paused') return 'text-yellow-400 bg-yellow-400/10';
-    return 'text-gray-400 bg-gray-400/10';
+    } catch { toast.error('Failed to delete'); }
   };
 
   // ── Detail View ──
   if (selectedId && scheduler) {
     return (
-      <div className="max-w-6xl mx-auto p-4 sm:p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <button onClick={() => { setSelectedId(null); setScheduler(null); }} className="p-2 rounded-lg hover:bg-[var(--bg-secondary)] transition-colors">
+      <div>
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-5">
+          <button onClick={() => { setSelectedId(null); setScheduler(null); setActiveTab('settings'); }} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition">
             <ArrowLeft size={20} />
           </button>
           <div className="flex-1">
-            <h1 className="text-xl font-bold">{scheduler.name}</h1>
-            {scheduler.description && <p className="text-sm text-[var(--text-secondary)]">{scheduler.description}</p>}
+            <h2 className="text-lg font-bold text-gray-800">{scheduler.name}</h2>
+            {scheduler.description && <p className="text-xs text-gray-500">{scheduler.description}</p>}
           </div>
-          <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusColor(scheduler.status)}`}>
+          <span className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full ${statusColors[scheduler.status] || statusColors.draft}`}>
             {scheduler.status}
           </span>
           {scheduler.status === 'draft' || scheduler.status === 'paused' ? (
-            <button onClick={handleActivate} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors">
+            <button onClick={handleActivate} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition">
               <Play size={14} /> Activate
             </button>
           ) : (
-            <button onClick={handlePause} className="flex items-center gap-1.5 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg text-sm transition-colors">
+            <button onClick={handlePause} className="flex items-center gap-1.5 px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg text-sm transition">
               <Pause size={14} /> Pause
             </button>
           )}
-          <button onClick={handleDelete} className="p-2 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors">
+          <button onClick={handleDelete} className="p-2 rounded-lg hover:bg-red-50 text-red-400 transition">
             <Trash2 size={18} />
           </button>
         </div>
 
-        <div className="flex gap-0 border-b border-[var(--border-primary)] mb-6 overflow-x-auto">
+        {/* Tabs */}
+        <div className="bg-gray-100 rounded-xl p-1 flex gap-1 mb-5 overflow-x-auto">
           {TABS.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                activeTab === tab.id ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              className={`flex items-center gap-1.5 px-3 md:px-5 py-2 md:py-2.5 rounded-lg text-xs md:text-sm font-medium transition whitespace-nowrap ${
+                activeTab === tab.id ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}>
-              <tab.icon size={16} /> {tab.label}
-              {tab.id === 'rules' && <span className="text-xs opacity-60">({rules.length})</span>}
+              <tab.icon size={14} /> {tab.label}
+              {tab.id === 'rules' && <span className="text-[10px] opacity-60">({rules.length})</span>}
             </button>
           ))}
         </div>
 
-        {activeTab === 'settings' && (
-          <div className="max-w-2xl space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Name</label>
-              <input type="text" value={settingsForm.name || ''} onChange={e => setSettingsForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Description</label>
-              <input type="text" value={settingsForm.description || ''} onChange={e => setSettingsForm(f => ({ ...f, description: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
+        {/* Tab Content */}
+        <div className="bg-white rounded-xl shadow p-5">
+          {activeTab === 'settings' && (
+            <div className="max-w-xl space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Send Time</label>
-                <input type="time" value={settingsForm.send_time || '00:00'} onChange={e => setSettingsForm(f => ({ ...f, send_time: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input type="text" value={settingsForm.name || ''} onChange={e => setSettingsForm(f => ({ ...f, name: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Timezone</label>
-                <select value={settingsForm.timezone || 'Asia/Kolkata'} onChange={e => setSettingsForm(f => ({ ...f, timezone: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]">
-                  {COMMON_TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
-                </select>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <input type="text" value={settingsForm.description || ''} onChange={e => setSettingsForm(f => ({ ...f, description: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400" />
               </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="relative inline-flex items-center cursor-pointer">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Send Time</label>
+                  <input type="time" value={settingsForm.send_time || '00:00'} onChange={e => setSettingsForm(f => ({ ...f, send_time: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+                  <select value={settingsForm.timezone || 'Asia/Kolkata'} onChange={e => setSettingsForm(f => ({ ...f, timezone: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400">
+                    {COMMON_TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                  </select>
+                </div>
+              </div>
+              <label className="flex items-center gap-3 cursor-pointer">
                 <input type="checkbox" checked={settingsForm.catch_up_past_dates || false}
                   onChange={e => setSettingsForm(f => ({ ...f, catch_up_past_dates: e.target.checked }))}
-                  className="sr-only peer" />
-                <div className="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-[var(--accent-primary)] rounded-full peer peer-checked:bg-green-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                  className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                <span className="text-sm text-gray-700">Send catch-up messages for dates already passed this year</span>
               </label>
-              <span className="text-sm">Send catch-up messages for dates already passed this year</span>
+              <button onClick={handleUpdateSettings} className="px-5 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white rounded-lg text-sm transition">
+                Save Settings
+              </button>
             </div>
-            <button onClick={handleUpdateSettings} className="px-6 py-2 bg-[var(--accent-primary)] hover:opacity-90 text-white rounded-lg text-sm transition-opacity">
-              Save Settings
-            </button>
-          </div>
-        )}
-
-        {activeTab === 'rules' && <RulesTab schedulerId={selectedId} rules={rules} csvColumns={csvColumns} onRefresh={() => loadSchedulerDetail(selectedId)} />}
-        {activeTab === 'contacts' && <ContactsTab schedulerId={selectedId} onRefresh={() => loadSchedulerDetail(selectedId)} />}
-        {activeTab === 'upcoming' && <UpcomingTab schedulerId={selectedId} />}
-        {activeTab === 'analytics' && <AnalyticsTab schedulerId={selectedId} />}
-        {activeTab === 'logs' && <LogsTab schedulerId={selectedId} rules={rules} />}
+          )}
+          {activeTab === 'rules' && <RulesTab schedulerId={selectedId} rules={rules} csvColumns={csvColumns} onRefresh={() => loadSchedulerDetail(selectedId)} />}
+          {activeTab === 'contacts' && <ContactsTab schedulerId={selectedId} onRefresh={() => loadSchedulerDetail(selectedId)} />}
+          {activeTab === 'upcoming' && <UpcomingTab schedulerId={selectedId} />}
+          {activeTab === 'analytics' && <AnalyticsTab schedulerId={selectedId} />}
+          {activeTab === 'logs' && <LogsTab schedulerId={selectedId} rules={rules} />}
+        </div>
       </div>
     );
   }
 
   // ── List View ──
   return (
-    <div className="max-w-6xl mx-auto p-4 sm:p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><CalendarClock size={24} /> Scheduler</h1>
-          <p className="text-sm text-[var(--text-secondary)] mt-1">Date-triggered recurring WhatsApp messages</p>
-        </div>
-        <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] hover:opacity-90 text-white rounded-lg text-sm transition-opacity">
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-semibold text-gray-800">Your Schedulers</h3>
+        <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)] transition">
           <Plus size={16} /> New Scheduler
         </button>
       </div>
 
+      {/* Create Modal */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--bg-primary)] rounded-xl p-6 w-full max-w-md border border-[var(--border-primary)]">
-            <h2 className="text-lg font-bold mb-4">New Scheduler</h2>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">New Scheduler</h3>
+              <button onClick={() => setShowCreate(false)} className="p-1 rounded hover:bg-gray-100"><X size={18} /></button>
+            </div>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm font-medium mb-1">Name *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
                 <input type="text" value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Employee Birthdays"
-                  className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Description</label>
-                <input type="text" value={createForm.description} onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional description"
-                  className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <input type="text" value={createForm.description} onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Send Time</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Send Time</label>
                   <input type="time" value={createForm.send_time} onChange={e => setCreateForm(f => ({ ...f, send_time: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Timezone</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
                   <select value={createForm.timezone} onChange={e => setCreateForm(f => ({ ...f, timezone: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]">
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
                     {COMMON_TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
                   </select>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" checked={createForm.catch_up_past_dates} onChange={e => setCreateForm(f => ({ ...f, catch_up_past_dates: e.target.checked }))} id="catchup" />
-                <label htmlFor="catchup" className="text-sm">Send for dates already passed this year</label>
-              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={createForm.catch_up_past_dates} onChange={e => setCreateForm(f => ({ ...f, catch_up_past_dates: e.target.checked }))}
+                  className="w-4 h-4 rounded border-gray-300 text-indigo-600" />
+                <span className="text-sm text-gray-600">Send for dates already passed this year</span>
+              </label>
             </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button onClick={() => setShowCreate(false)} className="px-4 py-2 rounded-lg bg-[var(--bg-secondary)] text-sm hover:opacity-80">Cancel</button>
-              <button onClick={handleCreate} className="px-4 py-2 rounded-lg bg-[var(--accent-primary)] text-white text-sm hover:opacity-90">Create</button>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setShowCreate(false)} className="px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 transition">Cancel</button>
+              <button onClick={handleCreate} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm hover:bg-[var(--color-primary-dark)] transition">Create</button>
             </div>
           </div>
         </div>
       )}
 
-      {schedulers.length === 0 ? (
-        <div className="text-center py-16 text-[var(--text-secondary)]">
-          <CalendarClock size={48} className="mx-auto mb-4 opacity-30" />
-          <p className="text-lg font-medium mb-2">No schedulers yet</p>
-          <p className="text-sm">Create your first scheduler to send birthday wishes, anniversary greetings, and more.</p>
+      {/* Cards */}
+      {loading ? (
+        <div className="text-center py-12 text-gray-400">Loading schedulers...</div>
+      ) : schedulers.length === 0 ? (
+        <div className="bg-white rounded-xl shadow p-8 text-center">
+          <CalendarClock size={48} className="mx-auto mb-4 text-gray-300" />
+          <h3 className="text-lg font-semibold text-gray-700 mb-2">No schedulers yet</h3>
+          <p className="text-sm text-gray-500 mb-4">Create your first scheduler to send birthday wishes, anniversary greetings, and more.</p>
+          <button onClick={() => setShowCreate(true)} className="px-4 py-2 text-sm bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)] transition">
+            Create Scheduler
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {schedulers.map(s => (
-            <button key={s.id} onClick={() => setSelectedId(s.id)}
-              className={`text-left p-4 rounded-xl border transition-all hover:shadow-lg ${
-                s.status === 'active' ? 'border-green-500/30' : s.status === 'paused' ? 'border-yellow-500/30' : 'border-[var(--border-primary)]'
-              } bg-[var(--bg-secondary)] hover:bg-[var(--bg-secondary)]/80`}>
-              <div className="flex items-start justify-between mb-2">
-                <h3 className="font-semibold text-[var(--text-primary)]">{s.name}</h3>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColor(s.status)}`}>{s.status}</span>
+            <button key={s.id} onClick={() => setSelectedId(s.id)} className="bg-white rounded-xl shadow hover:shadow-md transition p-5 text-left group">
+              <div className="flex items-start justify-between mb-3">
+                <h4 className="font-semibold text-gray-800 group-hover:text-[var(--color-primary-dark)] transition truncate flex-1">{s.name}</h4>
+                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${statusColors[s.status] || statusColors.draft}`}>{s.status}</span>
               </div>
-              {s.description && <p className="text-xs text-[var(--text-secondary)] mb-3 line-clamp-2">{s.description}</p>}
-              <div className="flex gap-4 text-xs text-[var(--text-secondary)]">
-                <span>{s.rule_count} rule{s.rule_count !== 1 ? 's' : ''}</span>
-                <span>{s.contact_count} contact{s.contact_count !== 1 ? 's' : ''}</span>
+              {s.description && <p className="text-xs text-gray-500 mb-3 line-clamp-2">{s.description}</p>}
+              <div className="flex items-center gap-4 text-xs text-gray-400">
+                <span className="flex items-center gap-1"><Hash size={12} /> {s.rule_count} rules</span>
+                <span className="flex items-center gap-1"><Users size={12} /> {s.contact_count} contacts</span>
+                <span className="flex items-center gap-1"><Clock size={12} /> {s.send_time}</span>
               </div>
             </button>
           ))}
@@ -316,37 +317,28 @@ function RulesTab({ schedulerId, rules, csvColumns, onRefresh }) {
   const [form, setForm] = useState({ name: '', date_column: '', template_id: '' });
 
   useEffect(() => {
-    client.get('/templates').then(({ data }) => setTemplates(data.templates || [])).catch(() => {});
+    api.get('/templates').then(({ data }) => setTemplates(data.templates || [])).catch(() => {});
   }, []);
 
   const handleSave = async (isEdit = false) => {
     if (!form.name || !form.date_column || !form.template_id) return toast.error('All fields are required');
     try {
       if (isEdit) {
-        await client.put(`/schedulers/${schedulerId}/rules/${editingId}`, form);
+        await api.put(`/schedulers/${schedulerId}/rules/${editingId}`, form);
         toast.success('Rule updated');
       } else {
-        await client.post(`/schedulers/${schedulerId}/rules`, form);
+        await api.post(`/schedulers/${schedulerId}/rules`, form);
         toast.success('Rule added');
       }
-      setShowAdd(false);
-      setEditingId(null);
-      setForm({ name: '', date_column: '', template_id: '' });
+      setShowAdd(false); setEditingId(null); setForm({ name: '', date_column: '', template_id: '' });
       onRefresh();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed');
-    }
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
   };
 
   const handleDelete = async (ruleId) => {
     if (!confirm('Delete this rule?')) return;
-    try {
-      await client.delete(`/schedulers/${schedulerId}/rules/${ruleId}`);
-      toast.success('Rule deleted');
-      onRefresh();
-    } catch (err) {
-      toast.error('Failed to delete');
-    }
+    try { await api.delete(`/schedulers/${schedulerId}/rules/${ruleId}`); toast.success('Rule deleted'); onRefresh(); }
+    catch { toast.error('Failed to delete'); }
   };
 
   const startEdit = (rule) => {
@@ -355,73 +347,67 @@ function RulesTab({ schedulerId, rules, csvColumns, onRefresh }) {
     setShowAdd(true);
   };
 
-  const ruleForm = (
-    <div className="p-4 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] space-y-3 mb-4">
-      <div>
-        <label className="block text-sm font-medium mb-1">Rule Name</label>
-        <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Birthday Wish"
-          className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium mb-1">Date Column (from CSV)</label>
-        {csvColumns.length > 0 ? (
-          <select value={form.date_column} onChange={e => setForm(f => ({ ...f, date_column: e.target.value }))}
-            className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]">
-            <option value="">Select column...</option>
-            {csvColumns.map(col => <option key={col} value={col}>{col}</option>)}
-          </select>
-        ) : (
-          <input type="text" value={form.date_column} onChange={e => setForm(f => ({ ...f, date_column: e.target.value }))} placeholder="Column name, e.g. birthday"
-            className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
-        )}
-        {csvColumns.length === 0 && <p className="text-xs text-yellow-500 mt-1">Upload contacts first to auto-detect columns</p>}
-      </div>
-      <div>
-        <label className="block text-sm font-medium mb-1">Template</label>
-        <select value={form.template_id} onChange={e => setForm(f => ({ ...f, template_id: e.target.value }))}
-          className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]">
-          <option value="">Select template...</option>
-          {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-      </div>
-      <div className="flex gap-2">
-        <button onClick={() => handleSave(!!editingId)} className="px-4 py-2 bg-[var(--accent-primary)] text-white rounded-lg text-sm hover:opacity-90">
-          {editingId ? 'Update' : 'Add'} Rule
-        </button>
-        <button onClick={() => { setShowAdd(false); setEditingId(null); setForm({ name: '', date_column: '', template_id: '' }); }}
-          className="px-4 py-2 bg-[var(--bg-primary)] rounded-lg text-sm hover:opacity-80">Cancel</button>
-      </div>
-    </div>
-  );
-
   return (
     <div>
       {!showAdd && (
-        <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] hover:opacity-90 text-white rounded-lg text-sm mb-4 transition-opacity">
+        <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-dark)] transition mb-4">
           <Plus size={16} /> Add Rule
         </button>
       )}
-      {showAdd && ruleForm}
+      {showAdd && (
+        <div className="bg-gray-50 rounded-xl p-4 space-y-3 mb-4 border border-gray-200">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Rule Name</label>
+            <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Birthday Wish"
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date Column (from CSV)</label>
+            {csvColumns.length > 0 ? (
+              <select value={form.date_column} onChange={e => setForm(f => ({ ...f, date_column: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <option value="">Select column...</option>
+                {csvColumns.map(col => <option key={col} value={col}>{col}</option>)}
+              </select>
+            ) : (
+              <input type="text" value={form.date_column} onChange={e => setForm(f => ({ ...f, date_column: e.target.value }))} placeholder="e.g. birthday"
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            )}
+            {csvColumns.length === 0 && <p className="text-xs text-yellow-600 mt-1">Upload contacts first to auto-detect columns</p>}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Template</label>
+            <select value={form.template_id} onChange={e => setForm(f => ({ ...f, template_id: e.target.value }))}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+              <option value="">Select template...</option>
+              {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => handleSave(!!editingId)} className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm hover:bg-[var(--color-primary-dark)] transition">
+              {editingId ? 'Update' : 'Add'} Rule
+            </button>
+            <button onClick={() => { setShowAdd(false); setEditingId(null); setForm({ name: '', date_column: '', template_id: '' }); }}
+              className="px-4 py-2 text-gray-600 rounded-lg text-sm hover:bg-gray-100 transition">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {rules.length === 0 && !showAdd ? (
-        <p className="text-[var(--text-secondary)] text-sm">No rules yet. Add a rule to map a date column to a message template.</p>
+        <p className="text-gray-400 text-sm">No rules yet. Add a rule to map a date column to a message template.</p>
       ) : (
         <div className="space-y-3">
           {rules.map(rule => (
-            <div key={rule.id} className="p-4 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] flex items-center gap-4">
+            <div key={rule.id} className="bg-gray-50 rounded-xl p-4 flex items-center gap-4 border border-gray-200">
               <div className="flex-1">
-                <h4 className="font-medium">{rule.name}</h4>
-                <p className="text-sm text-[var(--text-secondary)]">
-                  Column: <span className="text-[var(--accent-primary)]">{rule.date_column}</span> → Template: <span className="text-[var(--accent-primary)]">{rule.template_name || 'Unknown'}</span>
-                  {rule.media_type && <span className="ml-2 text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full">{rule.media_type}</span>}
+                <h4 className="font-medium text-gray-800">{rule.name}</h4>
+                <p className="text-sm text-gray-500">
+                  Column: <span className="text-indigo-600 font-medium">{rule.date_column}</span> → Template: <span className="text-indigo-600 font-medium">{rule.template_name || 'Unknown'}</span>
+                  {rule.media_type && <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">{rule.media_type}</span>}
                 </p>
               </div>
-              <button onClick={() => startEdit(rule)} className="p-2 rounded-lg hover:bg-[var(--bg-primary)] transition-colors">
-                <Edit2 size={16} />
-              </button>
-              <button onClick={() => handleDelete(rule.id)} className="p-2 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors">
-                <Trash2 size={16} />
-              </button>
+              <button onClick={() => startEdit(rule)} className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition"><Edit2 size={16} /></button>
+              <button onClick={() => handleDelete(rule.id)} className="p-2 rounded-lg hover:bg-red-50 text-red-400 transition"><Trash2 size={16} /></button>
             </div>
           ))}
         </div>
@@ -448,12 +434,9 @@ function ContactsTab({ schedulerId, onRefresh }) {
 
   const loadContacts = useCallback(async () => {
     try {
-      const { data } = await client.get(`/schedulers/${schedulerId}/contacts`, { params: { page, search, limit: 50 } });
-      setContacts(data.contacts);
-      setTotal(data.total);
-    } catch (err) {
-      toast.error('Failed to load contacts');
-    }
+      const { data } = await api.get(`/schedulers/${schedulerId}/contacts`, { params: { page, search, limit: 50 } });
+      setContacts(data.contacts); setTotal(data.total);
+    } catch { toast.error('Failed to load contacts'); }
   }, [schedulerId, page, search]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
@@ -480,10 +463,7 @@ function ContactsTab({ schedulerId, onRefresh }) {
       setCsvText(text);
       const parsed = parseCSV(text);
       setCsvParsed(parsed);
-      if (parsed) {
-        const phoneCol = parsed.headers.find(h => /phone|mobile|whatsapp|contact/i.test(h));
-        if (phoneCol) setPhoneColumn(phoneCol);
-      }
+      if (parsed) { const pc = parsed.headers.find(h => /phone|mobile|whatsapp|contact/i.test(h)); if (pc) setPhoneColumn(pc); }
     };
     reader.readAsText(file);
   };
@@ -491,240 +471,173 @@ function ContactsTab({ schedulerId, onRefresh }) {
   const handlePaste = () => {
     const parsed = parseCSV(csvText);
     setCsvParsed(parsed);
-    if (parsed) {
-      const phoneCol = parsed.headers.find(h => /phone|mobile|whatsapp|contact/i.test(h));
-      if (phoneCol) setPhoneColumn(phoneCol);
-    }
+    if (parsed) { const pc = parsed.headers.find(h => /phone|mobile|whatsapp|contact/i.test(h)); if (pc) setPhoneColumn(pc); }
   };
 
-  const toggleDateColumn = (col) => {
-    setDateColumns(prev => prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]);
-  };
+  const toggleDateColumn = (col) => setDateColumns(prev => prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]);
 
   const handleUpload = async () => {
     if (!csvParsed || !phoneColumn) return toast.error('Select a phone column');
     setUploading(true);
     setUploadProgress({ total: csvParsed.rows.length, done: 0, imported: 0, updated: 0, skipped: 0 });
-
     const chunkSize = 100;
     let totalImported = 0, totalUpdated = 0, totalSkipped = 0;
-
     for (let i = 0; i < csvParsed.rows.length; i += chunkSize) {
       const chunk = csvParsed.rows.slice(i, i + chunkSize);
       try {
-        const { data } = await client.post(`/schedulers/${schedulerId}/contacts/upload`, {
-          contacts: chunk,
-          phone_column: phoneColumn,
-          date_columns: dateColumns,
-        });
-        totalImported += data.imported;
-        totalUpdated += data.updated;
-        totalSkipped += data.skipped;
+        const { data } = await api.post(`/schedulers/${schedulerId}/contacts/upload`, { contacts: chunk, phone_column: phoneColumn, date_columns: dateColumns });
+        totalImported += data.imported; totalUpdated += data.updated; totalSkipped += data.skipped;
         setUploadProgress({ total: csvParsed.rows.length, done: Math.min(i + chunkSize, csvParsed.rows.length), imported: totalImported, updated: totalUpdated, skipped: totalSkipped });
-      } catch (err) {
-        toast.error(`Upload chunk failed: ${err.response?.data?.error || err.message}`);
-      }
+      } catch (err) { toast.error(`Upload failed: ${err.response?.data?.error || err.message}`); }
     }
-
-    toast.success(`Import complete: ${totalImported} new, ${totalUpdated} updated, ${totalSkipped} skipped`);
-    setUploading(false);
-    setCsvParsed(null);
-    setCsvText('');
-    setPhoneColumn('');
-    setDateColumns([]);
-    loadContacts();
-    onRefresh();
+    toast.success(`Import: ${totalImported} new, ${totalUpdated} updated, ${totalSkipped} skipped`);
+    setUploading(false); setCsvParsed(null); setCsvText(''); setPhoneColumn(''); setDateColumns([]);
+    loadContacts(); onRefresh();
   };
 
-  const handleDeleteContact = async (contactId) => {
-    try {
-      await client.delete(`/schedulers/${schedulerId}/contacts/${contactId}`);
-      toast.success('Contact deleted');
-      loadContacts();
-      onRefresh();
-    } catch (err) {
-      toast.error('Failed to delete');
-    }
+  const handleDeleteContact = async (id) => {
+    try { await api.delete(`/schedulers/${schedulerId}/contacts/${id}`); toast.success('Deleted'); loadContacts(); onRefresh(); }
+    catch { toast.error('Failed'); }
   };
 
   const handleAddManual = async () => {
-    try {
-      await client.post(`/schedulers/${schedulerId}/contacts`, manualForm);
-      toast.success('Contact added');
-      setShowAddManual(false);
-      setManualForm({});
-      loadContacts();
-      onRefresh();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to add');
-    }
+    try { await api.post(`/schedulers/${schedulerId}/contacts`, manualForm); toast.success('Added'); setShowAddManual(false); setManualForm({}); loadContacts(); onRefresh(); }
+    catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
   };
 
   const handleUpdateContact = async () => {
-    try {
-      const { id, ...rest } = editContact;
-      await client.put(`/schedulers/${schedulerId}/contacts/${id}`, rest);
-      toast.success('Contact updated');
-      setEditContact(null);
-      loadContacts();
-    } catch (err) {
-      toast.error('Failed to update');
-    }
+    try { const { id, ...rest } = editContact; await api.put(`/schedulers/${schedulerId}/contacts/${id}`, rest); toast.success('Updated'); setEditContact(null); loadContacts(); }
+    catch { toast.error('Failed'); }
   };
 
   return (
     <div>
-      {/* Upload Section */}
-      <div className="mb-6 p-4 rounded-xl border border-dashed border-[var(--border-primary)] bg-[var(--bg-secondary)]">
-        <h3 className="font-medium mb-3 flex items-center gap-2"><Upload size={16} /> Upload CSV</h3>
+      {/* Upload */}
+      <div className="mb-5 bg-gray-50 rounded-xl p-4 border-2 border-dashed border-gray-300">
+        <h4 className="font-medium text-gray-700 mb-3 flex items-center gap-2"><Upload size={16} /> Upload CSV</h4>
         <div className="flex gap-3 mb-3">
-          <label className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] text-white rounded-lg text-sm cursor-pointer hover:opacity-90">
+          <label className="flex items-center gap-2 px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm cursor-pointer hover:bg-[var(--color-primary-dark)] transition">
             <Upload size={14} /> Choose File
             <input type="file" accept=".csv,.txt" onChange={handleFileUpload} className="hidden" />
           </label>
-          <span className="text-sm text-[var(--text-secondary)] self-center">or paste CSV below</span>
+          <span className="text-sm text-gray-400 self-center">or paste CSV below</span>
         </div>
         <textarea value={csvText} onChange={e => setCsvText(e.target.value)} placeholder="phone,name,birthday,anniversary&#10;9876543210,John,15/04/1990,22/06/2015"
-          rows={4} className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-primary)] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] mb-2" />
-        {csvText && !csvParsed && (
-          <button onClick={handlePaste} className="px-4 py-1.5 bg-[var(--bg-primary)] rounded-lg text-sm hover:opacity-80 mb-3">Parse CSV</button>
-        )}
+          rows={3} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-300 mb-2" />
+        {csvText && !csvParsed && <button onClick={handlePaste} className="px-4 py-1.5 bg-gray-200 rounded-lg text-sm hover:bg-gray-300 transition mb-3">Parse CSV</button>}
 
         {csvParsed && (
-          <div className="mt-4 space-y-4">
+          <div className="mt-3 space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-2">Phone Column *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Phone Column *</label>
               <div className="flex gap-2 flex-wrap">
                 {csvParsed.headers.map(h => (
                   <button key={h} onClick={() => setPhoneColumn(h)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${phoneColumn === h ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}>
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${phoneColumn === h ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:border-indigo-400'}`}>
                     {h}
                   </button>
                 ))}
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2">Date Columns (select all that contain dates)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Date Columns (select all that contain dates)</label>
               <div className="flex gap-2 flex-wrap">
                 {csvParsed.headers.filter(h => h !== phoneColumn).map(h => (
                   <button key={h} onClick={() => toggleDateColumn(h)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${dateColumns.includes(h) ? 'bg-green-600 text-white' : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}>
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${dateColumns.includes(h) ? 'bg-green-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:border-green-400'}`}>
                     {h}
                   </button>
                 ))}
               </div>
             </div>
-
             <div>
-              <label className="block text-sm font-medium mb-2">Preview (first 5 rows)</label>
-              <div className="overflow-x-auto rounded-lg border border-[var(--border-primary)]">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Preview (first 5 rows)</label>
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
                 <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-[var(--bg-primary)]">
-                      {csvParsed.headers.map(h => (
-                        <th key={h} className={`px-3 py-2 text-left font-medium ${h === phoneColumn ? 'text-[var(--accent-primary)]' : dateColumns.includes(h) ? 'text-green-400' : 'text-[var(--text-secondary)]'}`}>
-                          {h} {h === phoneColumn && '(phone)'} {dateColumns.includes(h) && '(date)'}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
+                  <thead><tr className="bg-gray-100">
+                    {csvParsed.headers.map(h => (
+                      <th key={h} className={`px-3 py-2 text-left font-medium ${h === phoneColumn ? 'text-indigo-600' : dateColumns.includes(h) ? 'text-green-600' : 'text-gray-500'}`}>
+                        {h} {h === phoneColumn && '(phone)'} {dateColumns.includes(h) && '(date)'}
+                      </th>
+                    ))}
+                  </tr></thead>
                   <tbody>
                     {csvParsed.rows.slice(0, 5).map((row, i) => (
-                      <tr key={i} className="border-t border-[var(--border-primary)]">
-                        {csvParsed.headers.map(h => (
-                          <td key={h} className="px-3 py-2 text-[var(--text-secondary)]">{row[h]}</td>
-                        ))}
+                      <tr key={i} className="border-t border-gray-100">
+                        {csvParsed.headers.map(h => <td key={h} className="px-3 py-2 text-gray-600">{row[h]}</td>)}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
-
             <button onClick={handleUpload} disabled={uploading || !phoneColumn}
-              className="px-6 py-2 bg-[var(--accent-primary)] text-white rounded-lg text-sm hover:opacity-90 disabled:opacity-50 transition-opacity">
+              className="px-5 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm hover:bg-[var(--color-primary-dark)] disabled:opacity-50 transition">
               {uploading ? 'Uploading...' : `Import ${csvParsed.rows.length} Contacts`}
             </button>
           </div>
         )}
-
         {uploadProgress && (
           <div className="mt-3">
-            <div className="w-full bg-[var(--bg-primary)] rounded-full h-2 mb-2">
-              <div className="bg-[var(--accent-primary)] h-2 rounded-full transition-all" style={{ width: `${(uploadProgress.done / uploadProgress.total) * 100}%` }}></div>
+            <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+              <div className="bg-indigo-600 h-2 rounded-full transition-all" style={{ width: `${(uploadProgress.done / uploadProgress.total) * 100}%` }}></div>
             </div>
-            <p className="text-xs text-[var(--text-secondary)]">
-              {uploadProgress.done}/{uploadProgress.total} processed — {uploadProgress.imported} new, {uploadProgress.updated} updated, {uploadProgress.skipped} skipped
-            </p>
+            <p className="text-xs text-gray-500">{uploadProgress.done}/{uploadProgress.total} — {uploadProgress.imported} new, {uploadProgress.updated} updated, {uploadProgress.skipped} skipped</p>
           </div>
         )}
       </div>
 
       {/* Contact List */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]" />
-            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Search contacts..."
-              className="pl-9 pr-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Search..."
+              className="pl-9 pr-3 py-2 rounded-lg border border-gray-300 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           </div>
-          <span className="text-sm text-[var(--text-secondary)]">{total} contacts</span>
+          <span className="text-xs text-gray-400">{total} contacts</span>
         </div>
-        <button onClick={() => setShowAddManual(true)} className="flex items-center gap-2 px-3 py-2 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg text-sm hover:opacity-80">
-          <Plus size={14} /> Add Contact
+        <button onClick={() => setShowAddManual(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition">
+          <Plus size={14} /> Add
         </button>
       </div>
 
       {showAddManual && (
-        <div className="mb-4 p-4 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] space-y-3">
+        <div className="mb-3 bg-gray-50 rounded-xl p-4 border border-gray-200 space-y-3">
           <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1">Phone *</label>
-              <input type="text" value={manualForm.phone || ''} onChange={e => setManualForm(f => ({ ...f, phone: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-primary)] text-sm focus:outline-none" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">Name</label>
-              <input type="text" value={manualForm.name || ''} onChange={e => setManualForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-primary)] text-sm focus:outline-none" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">Birthday (DD/MM)</label>
-              <input type="text" value={manualForm.birthday || ''} onChange={e => setManualForm(f => ({ ...f, birthday: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-primary)] text-sm focus:outline-none" />
-            </div>
+            <div><label className="block text-xs font-medium text-gray-600 mb-1">Phone *</label>
+              <input type="text" value={manualForm.phone || ''} onChange={e => setManualForm(f => ({ ...f, phone: e.target.value }))} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-600 mb-1">Name</label>
+              <input type="text" value={manualForm.name || ''} onChange={e => setManualForm(f => ({ ...f, name: e.target.value }))} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-600 mb-1">Birthday</label>
+              <input type="text" value={manualForm.birthday || ''} onChange={e => setManualForm(f => ({ ...f, birthday: e.target.value }))} placeholder="DD/MM" className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" /></div>
           </div>
           <div className="flex gap-2">
-            <button onClick={handleAddManual} className="px-4 py-1.5 bg-[var(--accent-primary)] text-white rounded-lg text-sm">Add</button>
-            <button onClick={() => { setShowAddManual(false); setManualForm({}); }} className="px-4 py-1.5 bg-[var(--bg-primary)] rounded-lg text-sm">Cancel</button>
+            <button onClick={handleAddManual} className="px-4 py-1.5 bg-[var(--color-primary)] text-white rounded-lg text-sm">Add</button>
+            <button onClick={() => { setShowAddManual(false); setManualForm({}); }} className="px-4 py-1.5 text-gray-600 rounded-lg text-sm hover:bg-gray-100">Cancel</button>
           </div>
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-[var(--border-primary)]">
+      <div className="overflow-x-auto rounded-xl border border-gray-200">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-[var(--bg-secondary)]">
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Phone</th>
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Name</th>
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Data</th>
-              <th className="px-4 py-3 text-right font-medium text-[var(--text-secondary)]">Actions</th>
-            </tr>
-          </thead>
+          <thead><tr className="bg-gray-50">
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Data</th>
+            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+          </tr></thead>
           <tbody>
             {contacts.map(c => {
-              let data = {};
-              try { data = JSON.parse(c.contact_data); } catch {}
+              let data = {}; try { data = JSON.parse(c.contact_data); } catch {}
               return (
-                <tr key={c.id} className="border-t border-[var(--border-primary)]">
-                  <td className="px-4 py-3 font-mono text-xs">{c.phone}</td>
-                  <td className="px-4 py-3">{data.name || data.fullname || data.Name || '—'}</td>
-                  <td className="px-4 py-3 text-xs text-[var(--text-secondary)] max-w-xs truncate">
-                    {Object.entries(data).filter(([k]) => !['phone', 'name', 'fullname', 'Name'].includes(k)).map(([k, v]) => `${k}: ${v}`).join(', ')}
-                  </td>
+                <tr key={c.id} className="border-t border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-3 font-mono text-xs text-gray-600">{c.phone}</td>
+                  <td className="px-4 py-3 text-gray-800">{data.name || data.fullname || data.Name || '—'}</td>
+                  <td className="px-4 py-3 text-xs text-gray-400 max-w-xs truncate">{Object.entries(data).filter(([k]) => !['phone','name','fullname','Name'].includes(k)).map(([k,v]) => `${k}: ${v}`).join(', ')}</td>
                   <td className="px-4 py-3 text-right">
-                    <button onClick={() => setEditContact({ id: c.id, ...data })} className="p-1.5 rounded hover:bg-[var(--bg-primary)]"><Edit2 size={14} /></button>
-                    <button onClick={() => handleDeleteContact(c.id)} className="p-1.5 rounded hover:bg-red-500/10 text-red-400 ml-1"><Trash2 size={14} /></button>
+                    <button onClick={() => setEditContact({ id: c.id, ...data })} className="p-1.5 rounded hover:bg-gray-100"><Edit2 size={14} className="text-gray-400" /></button>
+                    <button onClick={() => handleDeleteContact(c.id)} className="p-1.5 rounded hover:bg-red-50 ml-1"><Trash2 size={14} className="text-red-400" /></button>
                   </td>
                 </tr>
               );
@@ -735,30 +648,26 @@ function ContactsTab({ schedulerId, onRefresh }) {
 
       {total > 50 && (
         <div className="flex justify-center gap-2 mt-4">
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-            className="px-3 py-1.5 rounded-lg bg-[var(--bg-secondary)] text-sm disabled:opacity-50">Previous</button>
-          <span className="px-3 py-1.5 text-sm text-[var(--text-secondary)]">Page {page} of {Math.ceil(total / 50)}</span>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / 50)}
-            className="px-3 py-1.5 rounded-lg bg-[var(--bg-secondary)] text-sm disabled:opacity-50">Next</button>
+          <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1} className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm disabled:opacity-40">Prev</button>
+          <span className="px-3 py-1.5 text-sm text-gray-500">Page {page}/{Math.ceil(total/50)}</span>
+          <button onClick={() => setPage(p => p+1)} disabled={page >= Math.ceil(total/50)} className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm disabled:opacity-40">Next</button>
         </div>
       )}
 
       {editContact && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--bg-primary)] rounded-xl p-6 w-full max-w-md border border-[var(--border-primary)]">
-            <h3 className="font-bold mb-4">Edit Contact</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
+            <h3 className="font-bold text-gray-800 mb-4">Edit Contact</h3>
             <div className="space-y-3 max-h-80 overflow-y-auto">
               {Object.entries(editContact).filter(([k]) => k !== 'id').map(([key, val]) => (
-                <div key={key}>
-                  <label className="block text-xs font-medium mb-1">{key}</label>
+                <div key={key}><label className="block text-xs font-medium text-gray-600 mb-1">{key}</label>
                   <input type="text" value={val || ''} onChange={e => setEditContact(c => ({ ...c, [key]: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] text-sm focus:outline-none" />
-                </div>
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" /></div>
               ))}
             </div>
             <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setEditContact(null)} className="px-4 py-2 rounded-lg bg-[var(--bg-secondary)] text-sm">Cancel</button>
-              <button onClick={handleUpdateContact} className="px-4 py-2 rounded-lg bg-[var(--accent-primary)] text-white text-sm">Save</button>
+              <button onClick={() => setEditContact(null)} className="px-4 py-2 text-gray-600 rounded-lg text-sm hover:bg-gray-100">Cancel</button>
+              <button onClick={handleUpdateContact} className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm">Save</button>
             </div>
           </div>
         </div>
@@ -775,38 +684,36 @@ function UpcomingTab({ schedulerId }) {
 
   useEffect(() => {
     setLoading(true);
-    client.get(`/schedulers/${schedulerId}/analytics/upcoming`, { params: { days } })
+    api.get(`/schedulers/${schedulerId}/analytics/upcoming`, { params: { days } })
       .then(({ data }) => setUpcoming(data.upcoming))
-      .catch(() => toast.error('Failed to load upcoming'))
+      .catch(() => toast.error('Failed to load'))
       .finally(() => setLoading(false));
   }, [schedulerId, days]);
 
-  const grouped = upcoming.reduce((acc, item) => {
-    if (!acc[item.date]) acc[item.date] = [];
-    acc[item.date].push(item);
-    return acc;
-  }, {});
+  const grouped = upcoming.reduce((acc, item) => { if (!acc[item.date]) acc[item.date] = []; acc[item.date].push(item); return acc; }, {});
 
   return (
     <div>
       <div className="flex items-center gap-2 mb-4">
-        <button onClick={() => setDays(7)} className={`px-3 py-1.5 rounded-lg text-sm ${days === 7 ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-secondary)]'}`}>Next 7 days</button>
-        <button onClick={() => setDays(30)} className={`px-3 py-1.5 rounded-lg text-sm ${days === 30 ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-secondary)]'}`}>Next 30 days</button>
+        {[7, 30].map(d => (
+          <button key={d} onClick={() => setDays(d)} className={`px-3 py-1.5 rounded-lg text-sm transition ${days === d ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+            Next {d} days
+          </button>
+        ))}
       </div>
-
-      {loading ? <p className="text-[var(--text-secondary)] text-sm">Loading...</p> : upcoming.length === 0 ? (
-        <p className="text-[var(--text-secondary)] text-sm">No upcoming messages in the next {days} days.</p>
+      {loading ? <p className="text-gray-400 text-sm">Loading...</p> : upcoming.length === 0 ? (
+        <p className="text-gray-400 text-sm">No upcoming messages in the next {days} days.</p>
       ) : (
         <div className="space-y-4">
           {Object.entries(grouped).map(([date, items]) => (
             <div key={date}>
-              <h4 className="text-sm font-medium mb-2 text-[var(--text-secondary)]">{new Date(date + 'T00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</h4>
+              <h4 className="text-sm font-medium text-gray-500 mb-2">{new Date(date + 'T00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</h4>
               <div className="space-y-1">
                 {items.map((item, i) => (
-                  <div key={i} className="flex items-center gap-4 p-3 rounded-lg bg-[var(--bg-secondary)] text-sm">
-                    <span className="text-[var(--accent-primary)] font-medium min-w-[120px]">{item.rule_name}</span>
-                    <span className="flex-1">{item.contact_name || '—'}</span>
-                    <span className="font-mono text-xs text-[var(--text-secondary)]">{item.phone}</span>
+                  <div key={i} className="flex items-center gap-4 p-3 rounded-lg bg-gray-50 text-sm border border-gray-100">
+                    <span className="text-indigo-600 font-medium min-w-[120px]">{item.rule_name}</span>
+                    <span className="flex-1 text-gray-700">{item.contact_name || '—'}</span>
+                    <span className="font-mono text-xs text-gray-400">{item.phone}</span>
                   </div>
                 ))}
               </div>
@@ -824,91 +731,82 @@ function AnalyticsTab({ schedulerId }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    client.get(`/schedulers/${schedulerId}/analytics`)
+    api.get(`/schedulers/${schedulerId}/analytics`)
       .then(({ data }) => setAnalytics(data))
-      .catch(() => toast.error('Failed to load analytics'))
+      .catch(() => toast.error('Failed'))
       .finally(() => setLoading(false));
   }, [schedulerId]);
 
   const handleExport = async () => {
     try {
-      const { data } = await client.get(`/schedulers/${schedulerId}/analytics/export`, { responseType: 'blob' });
+      const { data } = await api.get(`/schedulers/${schedulerId}/analytics/export`, { responseType: 'blob' });
       const url = URL.createObjectURL(new Blob([data]));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `scheduler-${schedulerId}-export.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const a = document.createElement('a'); a.href = url; a.download = `scheduler-${schedulerId}-export.csv`; a.click(); URL.revokeObjectURL(url);
     } catch { toast.error('Export failed'); }
   };
 
-  if (loading) return <p className="text-[var(--text-secondary)] text-sm">Loading...</p>;
+  if (loading) return <p className="text-gray-400 text-sm">Loading...</p>;
   if (!analytics) return null;
+
+  const cards = [
+    { label: 'Total Sent', value: analytics.totalSent, color: 'text-green-600' },
+    { label: 'This Month', value: analytics.sentThisMonth, color: 'text-blue-600' },
+    { label: 'Failed', value: analytics.totalFailed, color: 'text-red-500' },
+    { label: 'Success Rate', value: `${analytics.successRate}%`, color: 'text-indigo-600' },
+  ];
 
   return (
     <div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        {[
-          { label: 'Total Sent', value: analytics.totalSent, color: 'text-green-400' },
-          { label: 'This Month', value: analytics.sentThisMonth, color: 'text-blue-400' },
-          { label: 'Failed', value: analytics.totalFailed, color: 'text-red-400' },
-          { label: 'Success Rate', value: `${analytics.successRate}%`, color: 'text-[var(--accent-primary)]' },
-        ].map(card => (
-          <div key={card.label} className="p-4 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-primary)] text-center">
-            <div className={`text-2xl font-bold ${card.color}`}>{card.value}</div>
-            <div className="text-xs text-[var(--text-secondary)] mt-1">{card.label}</div>
+        {cards.map(c => (
+          <div key={c.label} className="bg-gray-50 rounded-xl p-4 text-center border border-gray-100">
+            <div className={`text-2xl font-bold ${c.color}`}>{c.value}</div>
+            <div className="text-xs text-gray-500 mt-1">{c.label}</div>
           </div>
         ))}
       </div>
-
-      <div className="mb-6">
-        <h3 className="font-medium mb-3">Per-Rule Breakdown</h3>
-        <div className="overflow-x-auto rounded-lg border border-[var(--border-primary)]">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[var(--bg-secondary)]">
-                <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Rule</th>
-                <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Column</th>
-                <th className="px-4 py-3 text-right font-medium text-green-400">Sent</th>
-                <th className="px-4 py-3 text-right font-medium text-red-400">Failed</th>
-                <th className="px-4 py-3 text-right font-medium text-[var(--text-secondary)]">Rate</th>
+      <h4 className="font-medium text-gray-700 mb-3">Per-Rule Breakdown</h4>
+      <div className="overflow-x-auto rounded-xl border border-gray-200 mb-5">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-gray-50">
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rule</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Column</th>
+            <th className="px-4 py-3 text-right text-xs font-medium text-green-600 uppercase">Sent</th>
+            <th className="px-4 py-3 text-right text-xs font-medium text-red-500 uppercase">Failed</th>
+            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Rate</th>
+          </tr></thead>
+          <tbody>
+            {analytics.ruleStats.map(r => (
+              <tr key={r.id} className="border-t border-gray-100">
+                <td className="px-4 py-3 font-medium text-gray-800">{r.name}</td>
+                <td className="px-4 py-3 text-gray-500">{r.date_column}</td>
+                <td className="px-4 py-3 text-right text-green-600">{r.sent}</td>
+                <td className="px-4 py-3 text-right text-red-500">{r.failed}</td>
+                <td className="px-4 py-3 text-right">{r.sent + r.failed > 0 ? Math.round((r.sent / (r.sent + r.failed)) * 100) : 0}%</td>
               </tr>
-            </thead>
-            <tbody>
-              {analytics.ruleStats.map(rule => (
-                <tr key={rule.id} className="border-t border-[var(--border-primary)]">
-                  <td className="px-4 py-3 font-medium">{rule.name}</td>
-                  <td className="px-4 py-3 text-[var(--text-secondary)]">{rule.date_column}</td>
-                  <td className="px-4 py-3 text-right text-green-400">{rule.sent}</td>
-                  <td className="px-4 py-3 text-right text-red-400">{rule.failed}</td>
-                  <td className="px-4 py-3 text-right">{rule.sent + rule.failed > 0 ? Math.round((rule.sent / (rule.sent + rule.failed)) * 100) : 0}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
-
       {analytics.monthlyTrend.length > 0 && (
-        <div className="mb-6">
-          <h3 className="font-medium mb-3">Monthly Trend</h3>
-          <div className="flex items-end gap-2 h-32">
+        <div className="mb-5">
+          <h4 className="font-medium text-gray-700 mb-3">Monthly Trend</h4>
+          <div className="flex items-end gap-2 h-32 bg-gray-50 rounded-xl p-3 border border-gray-100">
             {analytics.monthlyTrend.map(m => {
-              const maxCount = Math.max(...analytics.monthlyTrend.map(x => x.count), 1);
-              const height = Math.max((m.count / maxCount) * 100, 4);
+              const max = Math.max(...analytics.monthlyTrend.map(x => x.count), 1);
+              const h = Math.max((m.count / max) * 100, 4);
               return (
                 <div key={m.month} className="flex-1 flex flex-col items-center gap-1">
-                  <span className="text-xs text-[var(--text-secondary)]">{m.count}</span>
-                  <div className="w-full bg-[var(--accent-primary)] rounded-t" style={{ height: `${height}%` }}></div>
-                  <span className="text-xs text-[var(--text-secondary)]">{m.month.slice(5)}</span>
+                  <span className="text-[10px] text-gray-500">{m.count}</span>
+                  <div className="w-full bg-indigo-500 rounded-t" style={{ height: `${h}%` }}></div>
+                  <span className="text-[10px] text-gray-400">{m.month.slice(5)}</span>
                 </div>
               );
             })}
           </div>
         </div>
       )}
-
-      <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg text-sm hover:opacity-80">
+      <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
         <Download size={14} /> Export CSV
       </button>
     </div>
@@ -924,70 +822,61 @@ function LogsTab({ schedulerId, rules }) {
   const [filterRule, setFilterRule] = useState('');
 
   useEffect(() => {
-    client.get(`/schedulers/${schedulerId}/logs`, { params: { page, limit: 50, status: filterStatus, rule_id: filterRule } })
+    api.get(`/schedulers/${schedulerId}/logs`, { params: { page, limit: 50, status: filterStatus, rule_id: filterRule } })
       .then(({ data }) => { setLogs(data.logs); setTotal(data.total); })
-      .catch(() => toast.error('Failed to load logs'));
+      .catch(() => toast.error('Failed'));
   }, [schedulerId, page, filterStatus, filterRule]);
 
   return (
     <div>
       <div className="flex gap-3 mb-4">
         <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] text-sm focus:outline-none">
+          className="px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none">
           <option value="">All statuses</option>
           <option value="sent">Sent</option>
           <option value="failed">Failed</option>
         </select>
         <select value={filterRule} onChange={e => { setFilterRule(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-primary)] text-sm focus:outline-none">
+          className="px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none">
           <option value="">All rules</option>
           {rules.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
-        <span className="text-sm text-[var(--text-secondary)] self-center">{total} entries</span>
+        <span className="text-xs text-gray-400 self-center">{total} entries</span>
       </div>
-
-      <div className="overflow-x-auto rounded-lg border border-[var(--border-primary)]">
+      <div className="overflow-x-auto rounded-xl border border-gray-200">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-[var(--bg-secondary)]">
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Date</th>
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Contact</th>
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Phone</th>
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Rule</th>
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Status</th>
-              <th className="px-4 py-3 text-left font-medium text-[var(--text-secondary)]">Error</th>
-            </tr>
-          </thead>
+          <thead><tr className="bg-gray-50">
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contact</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rule</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Error</th>
+          </tr></thead>
           <tbody>
             {logs.map(log => {
-              let contactName = '';
-              try { const d = JSON.parse(log.contact_data); contactName = d.name || d.fullname || d.Name || ''; } catch {}
+              let cn = ''; try { const d = JSON.parse(log.contact_data); cn = d.name || d.fullname || d.Name || ''; } catch {}
               return (
-                <tr key={log.id} className="border-t border-[var(--border-primary)]">
-                  <td className="px-4 py-3 text-xs text-[var(--text-secondary)]">{log.sent_at ? new Date(log.sent_at).toLocaleString('en-IN') : '—'}</td>
-                  <td className="px-4 py-3">{contactName || '—'}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{log.phone}</td>
-                  <td className="px-4 py-3">{log.rule_name}</td>
+                <tr key={log.id} className="border-t border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-3 text-xs text-gray-500">{log.sent_at ? new Date(log.sent_at).toLocaleString('en-IN') : '—'}</td>
+                  <td className="px-4 py-3 text-gray-700">{cn || '—'}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-500">{log.phone}</td>
+                  <td className="px-4 py-3 text-gray-700">{log.rule_name}</td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-0.5 rounded-full text-xs ${log.status === 'sent' ? 'bg-green-400/10 text-green-400' : 'bg-red-400/10 text-red-400'}`}>
-                      {log.status}
-                    </span>
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${log.status === 'sent' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{log.status}</span>
                   </td>
-                  <td className="px-4 py-3 text-xs text-red-400 max-w-xs truncate">{log.error_message || ''}</td>
+                  <td className="px-4 py-3 text-xs text-red-500 max-w-xs truncate">{log.error_message || ''}</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
-
       {total > 50 && (
         <div className="flex justify-center gap-2 mt-4">
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-            className="px-3 py-1.5 rounded-lg bg-[var(--bg-secondary)] text-sm disabled:opacity-50">Previous</button>
-          <span className="px-3 py-1.5 text-sm text-[var(--text-secondary)]">Page {page} of {Math.ceil(total / 50)}</span>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / 50)}
-            className="px-3 py-1.5 rounded-lg bg-[var(--bg-secondary)] text-sm disabled:opacity-50">Next</button>
+          <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1} className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm disabled:opacity-40">Prev</button>
+          <span className="px-3 py-1.5 text-sm text-gray-500">Page {page}/{Math.ceil(total/50)}</span>
+          <button onClick={() => setPage(p => p+1)} disabled={page >= Math.ceil(total/50)} className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm disabled:opacity-40">Next</button>
         </div>
       )}
     </div>
